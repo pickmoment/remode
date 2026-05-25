@@ -1,0 +1,19 @@
+# binary
+/remode
+
+# config & secrets
+*.toml
+*.env
+
+# database
+*.db
+*.db-shm
+*.db-wal
+
+# macOS
+.DS_Store
+
+# editor
+.idea/
+.vscode/
+*.swp
