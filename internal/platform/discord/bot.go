@@ -96,8 +96,8 @@ func Run(ctx context.Context, cfg RunConfig, sm *session.Manager, setPlatform fu
 	}
 	defer dg.Close()
 
-	// Register slash commands
-	registered := registerCommands(dg, cfg.GuildID)
+	// Register slash commands (single atomic API call)
+	registerCommands(dg, cfg.GuildID)
 
 	if err := sm.Startup(ctx); err != nil {
 		log.Printf("startup error: %v", err)
@@ -114,7 +114,6 @@ func Run(ctx context.Context, cfg RunConfig, sm *session.Manager, setPlatform fu
 		log.Println("shutdown requested via bot")
 	}
 
-	deleteCommands(dg, cfg.GuildID, registered)
 	return nil
 }
 
@@ -154,29 +153,14 @@ func dispatchCommand(ctx context.Context, s *discordgo.Session, i *discordgo.Int
 	}
 }
 
-func registerCommands(s *discordgo.Session, guildID string) []*discordgo.ApplicationCommand {
-	appID := s.State.User.ID
-	var registered []*discordgo.ApplicationCommand
-	for _, cmd := range slashCommands {
-		c, err := s.ApplicationCommandCreate(appID, guildID, cmd)
-		if err != nil {
-			log.Printf("discord: register command %s: %v", cmd.Name, err)
-			continue
-		}
-		registered = append(registered, c)
+func registerCommands(s *discordgo.Session, guildID string) {
+	if _, err := s.ApplicationCommandBulkOverwrite(s.State.User.ID, guildID, slashCommands); err != nil {
+		log.Printf("discord: register commands: %v", err)
+		return
 	}
-	log.Printf("discord: registered %d commands", len(registered))
-	return registered
+	log.Printf("discord: registered %d commands", len(slashCommands))
 }
 
-func deleteCommands(s *discordgo.Session, guildID string, cmds []*discordgo.ApplicationCommand) {
-	appID := s.State.User.ID
-	for _, cmd := range cmds {
-		if err := s.ApplicationCommandDelete(appID, guildID, cmd.ID); err != nil {
-			log.Printf("discord: delete command %s: %v", cmd.Name, err)
-		}
-	}
-}
 
 func notifyDCStartup(ctx context.Context, platform core.ChatPlatform, sm *session.Manager, notifyChannelIDs []int64) {
 	msg := core.Message{Text: "🚀 remode 봇이 시작됐습니다."}

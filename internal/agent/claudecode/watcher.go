@@ -97,7 +97,11 @@ func Watch(
 			} else {
 				// Current JSONL changed
 				if settleMS > 0 {
-					time.Sleep(time.Duration(settleMS) * time.Millisecond)
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-time.After(time.Duration(settleMS) * time.Millisecond):
+					}
 				}
 				flushNewLines(sess, onEntry, updater)
 			}

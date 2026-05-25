@@ -203,9 +203,7 @@ func handleAttach(ctx context.Context, s *discordgo.Session, i *discordgo.Intera
 				CustomID: "_:attach:" + sess.Name,
 			})
 		}
-		respondWithComponents(s, i, "연결할 세션을 선택하세요:", []discordgo.MessageComponent{
-			discordgo.ActionsRow{Components: buttons},
-		})
+		respondWithComponents(s, i, "연결할 세션을 선택하세요:", buttonsToRows(buttons))
 		return
 	}
 
@@ -264,9 +262,7 @@ func handleKill(ctx context.Context, s *discordgo.Session, i *discordgo.Interact
 				CustomID: "_:kill:" + sess.Name,
 			})
 		}
-		respondWithComponents(s, i, "종료할 세션을 선택하세요:", []discordgo.MessageComponent{
-			discordgo.ActionsRow{Components: buttons},
-		})
+		respondWithComponents(s, i, "종료할 세션을 선택하세요:", buttonsToRows(buttons))
 		return
 	}
 
@@ -424,9 +420,7 @@ func handleSessions(ctx context.Context, s *discordgo.Session, i *discordgo.Inte
 			CustomID: "_:session_switch:" + ps.SessionID,
 		})
 	}
-	respondWithComponents(s, i, fmt.Sprintf("**%s** 프로젝트의 세션 목록:", sess.Name), []discordgo.MessageComponent{
-		discordgo.ActionsRow{Components: buttons},
-	})
+	respondWithComponents(s, i, fmt.Sprintf("**%s** 프로젝트의 세션 목록:", sess.Name), buttonsToRows(buttons))
 }
 
 func handleShutdown(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate, bd *BotData) {
@@ -504,6 +498,9 @@ func handleButtonInteraction(ctx context.Context, s *discordgo.Session, i *disco
 		dcShowProjectList(ctx, s, i, value, bd, false)
 
 	case "project":
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{ //nolint:errcheck
+			Type: discordgo.InteractionResponseDeferredMessageUpdate,
+		})
 		if bd.projList == nil {
 			editNoComp("⚠️ 프로젝트 정보가 만료됐습니다.")
 			return
@@ -539,16 +536,17 @@ func handleButtonInteraction(ctx context.Context, s *discordgo.Session, i *disco
 				CustomID: fmt.Sprintf("_:resume:%d", j),
 			})
 		}
-		empty := []discordgo.MessageComponent{}
 		content := fmt.Sprintf("**%s**\n세션을 선택하세요:", proj.DisplayPath)
-		rows := []discordgo.MessageComponent{discordgo.ActionsRow{Components: buttons}}
+		rows := buttonsToRows(buttons)
 		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{ //nolint:errcheck
 			Content:    &content,
 			Components: &rows,
 		})
-		_ = empty
 
 	case "resume":
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{ //nolint:errcheck
+			Type: discordgo.InteractionResponseDeferredMessageUpdate,
+		})
 		if bd.projSelected == nil {
 			editNoComp("⚠️ 프로젝트 정보가 만료됐습니다.")
 			return
@@ -568,9 +566,6 @@ func handleButtonInteraction(ctx context.Context, s *discordgo.Session, i *disco
 		for idx := 2; sm.Get(name) != nil; idx++ {
 			name = fmt.Sprintf("%s-%d", base, idx)
 		}
-		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{ //nolint:errcheck
-			Type: discordgo.InteractionResponseDeferredMessageUpdate,
-		})
 		if _, err := sm.Resume(ctx, name, bd.projSelected.project.CWD, chID, ps.SessionID, bd.projSelected.agentType); err != nil {
 			log.Printf("세션 재개 실패: %v", err)
 			editNoComp(fmt.Sprintf("❌ 실패: %v", err))
@@ -579,6 +574,9 @@ func handleButtonInteraction(ctx context.Context, s *discordgo.Session, i *disco
 		}
 
 	case "attach":
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{ //nolint:errcheck
+			Type: discordgo.InteractionResponseDeferredMessageUpdate,
+		})
 		if _, err := sm.Attach(ctx, value, chID); err != nil {
 			editNoComp(fmt.Sprintf("세션 **%s**을 찾을 수 없습니다.", value))
 		} else {
@@ -586,6 +584,9 @@ func handleButtonInteraction(ctx context.Context, s *discordgo.Session, i *disco
 		}
 
 	case "kill":
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{ //nolint:errcheck
+			Type: discordgo.InteractionResponseDeferredMessageUpdate,
+		})
 		if err := sm.Kill(ctx, value); err != nil {
 			editNoComp(fmt.Sprintf("세션 **%s**을 찾을 수 없습니다.", value))
 		} else {
@@ -615,6 +616,9 @@ func handleButtonInteraction(ctx context.Context, s *discordgo.Session, i *disco
 		}
 
 	case "shutdown":
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{ //nolint:errcheck
+			Type: discordgo.InteractionResponseDeferredMessageUpdate,
+		})
 		if value == "confirm" {
 			editNoComp("🔴 remode 봇을 종료합니다…")
 			if bd.StopCh != nil {
@@ -707,7 +711,7 @@ func dcShowProjectList(ctx context.Context, s *discordgo.Session, i *discordgo.I
 		})
 	}
 	content := "프로젝트를 선택하세요:"
-	rows := []discordgo.MessageComponent{discordgo.ActionsRow{Components: buttons}}
+	rows := buttonsToRows(buttons)
 	s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{ //nolint:errcheck
 		Content:    &content,
 		Components: &rows,
@@ -761,6 +765,19 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+// buttonsToRows splits buttons into ActionsRows of max 5 each (Discord limit).
+func buttonsToRows(buttons []discordgo.MessageComponent) []discordgo.MessageComponent {
+	var rows []discordgo.MessageComponent
+	for i := 0; i < len(buttons); i += 5 {
+		end := i + 5
+		if end > len(buttons) {
+			end = len(buttons)
+		}
+		rows = append(rows, discordgo.ActionsRow{Components: buttons[i:end]})
+	}
+	return rows
 }
 
 func pathBase(p string) string {
