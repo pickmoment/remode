@@ -113,9 +113,43 @@ func TestIsInfoPanel(t *testing.T) {
 }
 
 func TestIsInfoPanel_WithOptions(t *testing.T) {
-	// has navigation AND option lines → approval, not info
+	// has navigation AND numbered option lines → approval, not info
 	content := "❯ 1. option\nEsc to cancel"
 	assert.False(t, IsInfoPanel(content))
+}
+
+func TestIsInfoPanel_WithTextOptions(t *testing.T) {
+	// has navigation AND text option lines → text-option dialog, not info
+	content := "Which one?\n❯ Option A\n  Option B\nEsc to cancel"
+	assert.False(t, IsInfoPanel(content))
+}
+
+func TestIsTextOptionDialog(t *testing.T) {
+	content := "Which one?\n❯ Option A\n  Option B\nEsc to cancel"
+	assert.True(t, IsTextOptionDialog(content))
+}
+
+func TestIsTextOptionDialog_NumberedNotText(t *testing.T) {
+	content := "Which one?\n❯ 1. Option A\n  2. Option B\nEsc to cancel"
+	assert.False(t, IsTextOptionDialog(content))
+}
+
+func TestIsTextOptionDialog_NoNavigation(t *testing.T) {
+	content := "❯ Option A\n  Option B"
+	assert.False(t, IsTextOptionDialog(content))
+}
+
+func TestExtractNonNumberedOptions(t *testing.T) {
+	content := "Which library?\n\n❯ moment.js\n  day.js\n  date-fns\n\nEsc to cancel"
+	opts := ExtractNonNumberedOptions(content)
+	require.Equal(t, []string{"moment.js", "day.js", "date-fns"}, opts)
+}
+
+func TestExtractNonNumberedOptions_CursorNotFirst(t *testing.T) {
+	// cursor is on second option
+	content := "Which?\n\n  Option A\n❯ Option B\n  Option C\n\nEsc to cancel"
+	opts := ExtractNonNumberedOptions(content)
+	require.Equal(t, []string{"Option A", "Option B", "Option C"}, opts)
 }
 
 func TestIsMultistepWizard(t *testing.T) {
@@ -135,6 +169,53 @@ func TestExtractApprovalText(t *testing.T) {
 	text := ExtractApprovalText(content)
 	assert.Contains(t, text, "What should I do?")
 	assert.Contains(t, text, "Option A")
+}
+
+func TestExtractApprovalText_StripsSeparators(t *testing.T) {
+	// separator between question and options should be stripped
+	content := "Question?\n───────────────\n❯ 1. Yes\n  2. No\nEsc to cancel"
+	text := ExtractApprovalText(content)
+	assert.Contains(t, text, "Question?")
+	assert.NotContains(t, text, "───")
+}
+
+func TestExtractApprovalText_SeparatorBeforeQuestion(t *testing.T) {
+	// separator above question should be excluded (q should land on question line)
+	content := "───────────────\nReal question?\n❯ 1. Yes\n  2. No\nEsc to cancel"
+	text := ExtractApprovalText(content)
+	assert.Contains(t, text, "Real question?")
+	assert.NotContains(t, text, "───")
+}
+
+func TestParseEntry_AskUserQuestion(t *testing.T) {
+	entry := map[string]any{
+		"type": "assistant",
+		"message": map[string]any{
+			"content": []any{
+				map[string]any{
+					"type": "tool_use",
+					"name": "AskUserQuestion",
+					"input": map[string]any{
+						"questions": []any{
+							map[string]any{
+								"question": "Which option?",
+								"header":   "Option",
+								"options": []any{
+									map[string]any{"label": "Option A", "description": "desc A"},
+									map[string]any{"label": "Option B", "description": "desc B"},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	events := parseEntry(entry)
+	require.Len(t, events, 1)
+	assert.Equal(t, core.EventAskUserQuestion, events[0].Type)
+	assert.Equal(t, "Which option?", events[0].AskQuestion)
+	assert.Equal(t, []string{"Option A", "Option B"}, events[0].AskOptions)
 }
 
 func TestCountOptions(t *testing.T) {

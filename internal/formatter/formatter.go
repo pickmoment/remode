@@ -24,6 +24,8 @@ func FormatEvent(event core.AgentEvent) []core.Message {
 		return []core.Message{FormatApprovalPrompt(event.DialogText, event.OptionCount, event.IsWizard)}
 	case core.EventInfoPanel:
 		return []core.Message{FormatInfoPanel(event.PanelText)}
+	case core.EventAskUserQuestion:
+		return []core.Message{FormatAskUserQuestion(event.AskQuestion, event.AskOptions)}
 	}
 	return nil
 }
@@ -82,6 +84,38 @@ func FormatApprovalPrompt(dialogText string, optionCount int, isWizard bool) cor
 		Actions:      rows,
 		Category:     core.CategoryInteractive,
 		Preformatted: true,
+	}
+}
+
+// FormatAskUserQuestion returns an interactive message with one button per option.
+// Button ActionIDs use "arrowkey:N" (0-based index) so the handler can navigate
+// the TUI cursor: Up×20 to reset, Down×N, then Enter.
+func FormatAskUserQuestion(question string, options []string) core.Message {
+	var rows [][]core.Action
+	var row []core.Action
+	for i, opt := range options {
+		label := opt
+		row = append(row, core.Action{
+			Label:    label,
+			ActionID: fmt.Sprintf("arrowkey:%d", i),
+		})
+		if len(row) == 2 {
+			rows = append(rows, row)
+			row = nil
+		}
+	}
+	if len(row) > 0 {
+		rows = append(rows, row)
+	}
+	rows = append(rows, []core.Action{
+		{Label: "✖ 취소", ActionID: "key:Escape"},
+	})
+
+	text := "❓ " + question
+	return core.Message{
+		Text:     text,
+		Actions:  rows,
+		Category: core.CategoryInteractive,
 	}
 }
 

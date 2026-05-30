@@ -21,8 +21,12 @@ var (
 		"Yes, I trust this folder",
 		"Enter to confirm",
 	}
-	// matches "❯ 1" or "> 1" or "  1." at start of a line
+	// matches "❯ 1" or "> 1" or "  1." at start of a line (numbered options)
 	optionLineRE = regexp.MustCompile(`(?m)[>❯]\s*1\b|^\s{0,6}1\.`)
+	// matches cursor on text (non-numeric) options: "❯ SomeText" but not "❯ 1"
+	textOptionLineRE = regexp.MustCompile(`(?m)^[ \t]*[>❯][ \t]+[^\d\s]`)
+	// matches TUI horizontal separator lines (box-drawing dashes)
+	dialogSepRE = regexp.MustCompile("^[ \t]*─{3,}")
 )
 
 // tmuxCreate starts a new tmux session and launches claude inside it.
@@ -141,8 +145,22 @@ func IsApprovalDialog(content string) bool {
 	return hasDialogNavigation(content) && optionLineRE.MatchString(content)
 }
 
+// IsTextOptionDialog detects dialogs with text (non-numbered) options such as AskUserQuestion.
+func IsTextOptionDialog(content string) bool {
+	return hasDialogNavigation(content) &&
+		!optionLineRE.MatchString(content) &&
+		textOptionLineRE.MatchString(content)
+}
+
 func IsInfoPanel(content string) bool {
-	return hasDialogNavigation(content) && !optionLineRE.MatchString(content)
+	return hasDialogNavigation(content) &&
+		!optionLineRE.MatchString(content) &&
+		!textOptionLineRE.MatchString(content)
+}
+
+// isSeparatorLine reports whether a line is a TUI box-drawing separator (pure ─ chars).
+func isSeparatorLine(l string) bool {
+	return dialogSepRE.MatchString(l)
 }
 
 func IsMultistepWizard(content string) bool {
@@ -198,8 +216,9 @@ func ExtractApprovalText(content string) string {
 		return tail
 	}
 
+	// Go backward skipping blank lines AND separator lines to find the question
 	q := firstOpt - 1
-	for q >= 0 && strings.TrimSpace(lines[q]) == "" {
+	for q >= 0 && (strings.TrimSpace(lines[q]) == "" || isSeparatorLine(lines[q])) {
 		q--
 	}
 
@@ -209,20 +228,79 @@ func ExtractApprovalText(content string) string {
 		end = len(lines) - 1
 	}
 	for _, l := range lines[q : end+1] {
-		if strings.TrimSpace(l) != "" {
+		if strings.TrimSpace(l) != "" && !isSeparatorLine(l) {
 			dialogLines = append(dialogLines, strings.TrimRight(l, " "))
 		}
 	}
 	return strings.Join(dialogLines, "\n")
 }
 
+// ExtractNonNumberedOptions extracts labeled options from a text-option dialog (e.g. AskUserQuestion).
+// It finds the cursor line (❯) and collects adjacent option lines, stopping at blank or separator lines.
+func ExtractNonNumberedOptions(content string) []string {
+	lines := strings.Split(content, "\n")
+	endIdx := findDialogEnd(lines)
+
+	// Find cursor line
+	cursorIdx := -1
+	for i := 0; i < endIdx; i++ {
+		if textOptionLineRE.MatchString(lines[i]) {
+			cursorIdx = i
+			break
+		}
+	}
+	if cursorIdx == -1 {
+		return nil
+	}
+
+	// Extract cursor option text (text after ❯ or >)
+	cursorText := lines[cursorIdx]
+	for _, marker := range []string{"❯ ", "> "} {
+		if idx := strings.Index(cursorText, marker); idx != -1 {
+			cursorText = strings.TrimSpace(cursorText[idx+len(marker):])
+			break
+		}
+	}
+
+	// Scan backward until blank line or separator (options above cursor)
+	var above []string
+	for i := cursorIdx - 1; i >= 0; i-- {
+		li := strings.TrimRight(lines[i], " ")
+		if strings.TrimSpace(li) == "" || isSeparatorLine(li) {
+			break
+		}
+		above = append(above, strings.TrimSpace(li))
+	}
+	// Reverse: we collected in reverse order
+	for i, j := 0, len(above)-1; i < j; i, j = i+1, j-1 {
+		above[i], above[j] = above[j], above[i]
+	}
+
+	// Scan forward until blank line or separator (options below cursor)
+	var below []string
+	for i := cursorIdx + 1; i < endIdx; i++ {
+		li := strings.TrimRight(lines[i], " ")
+		if strings.TrimSpace(li) == "" || isSeparatorLine(li) {
+			break
+		}
+		below = append(below, strings.TrimSpace(li))
+	}
+
+	result := make([]string, 0, len(above)+1+len(below))
+	result = append(result, above...)
+	result = append(result, cursorText)
+	result = append(result, below...)
+	return result
+}
+
 func ExtractQuestionLine(content string) string {
 	lines := strings.Split(content, "\n")
 	endIdx := findDialogEnd(lines)
 
+	// Match numbered options first, then text options
 	firstOpt := -1
 	for i := endIdx - 1; i >= 0; i-- {
-		if optionLineRE.MatchString(lines[i]) {
+		if optionLineRE.MatchString(lines[i]) || textOptionLineRE.MatchString(lines[i]) {
 			firstOpt = i
 			break
 		}
@@ -231,7 +309,7 @@ func ExtractQuestionLine(content string) string {
 		return ""
 	}
 	q := firstOpt - 1
-	for q >= 0 && strings.TrimSpace(lines[q]) == "" {
+	for q >= 0 && (strings.TrimSpace(lines[q]) == "" || isSeparatorLine(lines[q])) {
 		q--
 	}
 	if q < 0 {

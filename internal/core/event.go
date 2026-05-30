@@ -4,11 +4,12 @@ package core
 type AgentEventType string
 
 const (
-	EventText           AgentEventType = "text"
-	EventToolUse        AgentEventType = "tool_use"
-	EventApprovalPrompt AgentEventType = "approval_prompt"
-	EventPlanPrompt     AgentEventType = "plan_prompt"
-	EventInfoPanel      AgentEventType = "info_panel"
+	EventText            AgentEventType = "text"
+	EventToolUse         AgentEventType = "tool_use"
+	EventApprovalPrompt  AgentEventType = "approval_prompt"
+	EventPlanPrompt      AgentEventType = "plan_prompt"
+	EventInfoPanel       AgentEventType = "info_panel"
+	EventAskUserQuestion AgentEventType = "ask_user_question"
 )
 
 // AgentEvent is a tagged union of all events an AIAgent can emit.
@@ -29,4 +30,8 @@ type AgentEvent struct {
 
 	// EventInfoPanel
 	PanelText string
+
+	// EventAskUserQuestion
+	AskQuestion string
+	AskOptions  []string
 }

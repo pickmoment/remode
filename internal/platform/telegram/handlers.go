@@ -681,6 +681,28 @@ func handleCallback(ctx context.Context, upd tgbotapi.Update, bd *BotData) {
 				break
 			}
 		}
+
+	case "arrowkey":
+		// Navigate to option N in a text-option dialog (e.g. AskUserQuestion).
+		// Strategy: reset cursor to top with Up×20, then press Down×N, then Enter.
+		var n int
+		fmt.Sscanf(value, "%d", &n)
+		for _, s := range sm.ListAll() {
+			short := s.Name
+			if len(short) > 20 {
+				short = short[:20]
+			}
+			if short == shortID {
+				for i := 0; i < 20; i++ {
+					sm.SendKey(s, "Up") //nolint:errcheck
+				}
+				for i := 0; i < n; i++ {
+					sm.SendKey(s, "Down") //nolint:errcheck
+				}
+				sm.SendKey(s, "Enter") //nolint:errcheck
+				break
+			}
+		}
 	}
 }
 

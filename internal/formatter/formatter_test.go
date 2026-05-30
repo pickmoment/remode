@@ -96,3 +96,26 @@ func TestFormatInfoPanel_Empty(t *testing.T) {
 	msg := formatter.FormatInfoPanel("")
 	assert.Equal(t, "ℹ️", msg.Text)
 }
+
+func TestFormatAskUserQuestion(t *testing.T) {
+	msg := formatter.FormatAskUserQuestion("Which option?", []string{"Option A", "Option B", "Option C"})
+	assert.Equal(t, core.CategoryInteractive, msg.Category)
+	assert.Contains(t, msg.Text, "Which option?")
+	// 3 options → 2 rows (2+1), plus cancel row
+	require.Len(t, msg.Actions, 3)
+	assert.Equal(t, "arrowkey:0", msg.Actions[0][0].ActionID)
+	assert.Equal(t, "arrowkey:1", msg.Actions[0][1].ActionID)
+	assert.Equal(t, "arrowkey:2", msg.Actions[1][0].ActionID)
+	assert.Equal(t, "key:Escape", msg.Actions[2][0].ActionID)
+}
+
+func TestFormatEvent_AskUserQuestion(t *testing.T) {
+	msgs := formatter.FormatEvent(core.AgentEvent{
+		Type:        core.EventAskUserQuestion,
+		AskQuestion: "Pick one",
+		AskOptions:  []string{"A", "B"},
+	})
+	require.Len(t, msgs, 1)
+	assert.Equal(t, core.CategoryInteractive, msgs[0].Category)
+	assert.Contains(t, msgs[0].Text, "Pick one")
+}
