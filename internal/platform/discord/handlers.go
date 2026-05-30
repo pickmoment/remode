@@ -15,7 +15,9 @@ import (
 	"github.com/pickmoment/remode/internal/session"
 )
 
-var discordSeparatorRE = regexp.MustCompile(`(?m)^─{3,}(?:\s+\S.*?\s+─+)?$`)
+// matches any pure horizontal-rule line: box-drawing chars (─━═╌╍) with optional
+// corner pieces (╭╮╰╯) and optional title text between the rule segments.
+var discordSeparatorRE = regexp.MustCompile(`^[╭╰]?[─━═╌╍]{3,}[╮╯]?$|^[─━═╌╍]{3,}(?:\s+\S.*?\s+[─━═╌╍]+)?$`)
 
 var dcAgentLabel = map[string]string{
 	"claude_code": "Claude Code",

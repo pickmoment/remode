@@ -15,25 +15,6 @@ import (
 	"github.com/pickmoment/remode/internal/core"
 )
 
-// askUserQuestionSuppressor coordinates between JSONL and TUI goroutines so the
-// TUI monitor doesn't re-emit an AskUserQuestion that was already sent via JSONL.
-type askUserQuestionSuppressor struct {
-	mu           sync.Mutex
-	jsonlQuestion string // question text sent via JSONL; TUI suppresses if it matches
-}
-
-func (s *askUserQuestionSuppressor) setJSONL(q string) {
-	s.mu.Lock()
-	s.jsonlQuestion = q
-	s.mu.Unlock()
-}
-
-func (s *askUserQuestionSuppressor) isSuppressed(q string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return q != "" && q == s.jsonlQuestion
-}
-
 var suppressedTexts = map[string]bool{
 	"No response requested": true,
 }
@@ -144,16 +125,11 @@ func (a *Agent) WatchEvents(
 	defer cancelJSONL()
 	defer cancelMon()
 
-	var suppressor askUserQuestionSuppressor
-
 	// JSONL watcher goroutine
 	go func() {
 		defer wg.Done()
 		onEntry := func(entry map[string]any) {
 			for _, ev := range parseEntry(entry) {
-				if ev.Type == core.EventAskUserQuestion {
-					suppressor.setJSONL(ev.AskQuestion)
-				}
 				onEvent(ev)
 			}
 		}
@@ -214,7 +190,7 @@ func (a *Agent) WatchEvents(
 					}
 				} else if IsTextOptionDialog(content) {
 					question := ExtractQuestionLine(content)
-					if !suppressor.isSuppressed(question) && (prompted != "ask_user" || question != lastQuestionLine) {
+					if prompted != "ask_user" || question != lastQuestionLine {
 						opts := ExtractNonNumberedOptions(content)
 						if len(opts) > 0 {
 							onEvent(core.AgentEvent{
@@ -223,9 +199,6 @@ func (a *Agent) WatchEvents(
 								AskOptions:  opts,
 							})
 						}
-						prompted = "ask_user"
-						lastQuestionLine = question
-					} else if prompted != "ask_user" {
 						prompted = "ask_user"
 						lastQuestionLine = question
 					}
@@ -334,10 +307,7 @@ func parseAssistant(entry map[string]any) []core.AgentEvent {
 			name, _ := m["name"].(string)
 			input, _ := m["input"].(map[string]any)
 			if name == "AskUserQuestion" {
-				if ev := parseAskUserQuestion(input); ev != nil {
-					events = append(events, *ev)
-					continue
-				}
+				continue
 			}
 			events = append(events, core.AgentEvent{
 				Type:      core.EventToolUse,
@@ -347,40 +317,6 @@ func parseAssistant(entry map[string]any) []core.AgentEvent {
 		}
 	}
 	return events
-}
-
-// parseAskUserQuestion converts an AskUserQuestion tool_use input into an event.
-// It extracts the first question's text and option labels.
-func parseAskUserQuestion(input map[string]any) *core.AgentEvent {
-	questions, _ := input["questions"].([]any)
-	if len(questions) == 0 {
-		return nil
-	}
-	q0, _ := questions[0].(map[string]any)
-	if q0 == nil {
-		return nil
-	}
-	question, _ := q0["question"].(string)
-	rawOpts, _ := q0["options"].([]any)
-	var options []string
-	for _, o := range rawOpts {
-		om, _ := o.(map[string]any)
-		if om == nil {
-			continue
-		}
-		label, _ := om["label"].(string)
-		if label != "" {
-			options = append(options, label)
-		}
-	}
-	if len(options) == 0 {
-		return nil
-	}
-	return &core.AgentEvent{
-		Type:        core.EventAskUserQuestion,
-		AskQuestion: question,
-		AskOptions:  options,
-	}
 }
 
 var numOptRE = regexp.MustCompile(`(?m)^\s*[❯>]?\s*(\d+)\.`)

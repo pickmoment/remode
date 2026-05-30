@@ -17,7 +17,9 @@ import (
 	"github.com/pickmoment/remode/internal/session"
 )
 
-var uiSeparatorRE = regexp.MustCompile(`(?m)^─{3,}(?:\s+\S.*?\s+─+)?$`)
+// matches any pure horizontal-rule line: box-drawing chars (─━═╌╍) with optional
+// corner pieces (╭╮╰╯) and optional title text between the rule segments.
+var uiSeparatorRE = regexp.MustCompile(`^[╭╰]?[─━═╌╍]{3,}[╮╯]?$|^[─━═╌╍]{3,}(?:\s+\S.*?\s+[─━═╌╍]+)?$`)
 
 // BotData holds shared references passed to handlers.
 type BotData struct {
