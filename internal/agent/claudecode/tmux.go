@@ -145,6 +145,14 @@ func IsApprovalDialog(content string) bool {
 	return hasDialogNavigation(content) && optionLineRE.MatchString(content)
 }
 
+// IsWizardFinalStep detects the "Ready to submit your answers?" confirmation dialog
+// that appears at the end of a multi-step AskUserQuestion wizard. This dialog has
+// numbered options (1./2.) but no standard navigation hints, so it cannot be caught
+// by IsApprovalDialog alone. Only call this when wizard state was previously observed.
+func IsWizardFinalStep(content string) bool {
+	return !hasDialogNavigation(content) && optionLineRE.MatchString(content)
+}
+
 // IsTextOptionDialog detects dialogs with text (non-numbered) options such as AskUserQuestion.
 func IsTextOptionDialog(content string) bool {
 	return hasDialogNavigation(content) &&

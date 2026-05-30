@@ -128,6 +128,11 @@ func (a *Agent) WatchEvents(
 	// JSONL watcher goroutine
 	go func() {
 		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("claudecode JSONL goroutine panic (%s): %v", sess.Name, r)
+			}
+		}()
 		onEntry := func(entry map[string]any) {
 			for _, ev := range parseEntry(entry) {
 				onEvent(ev)
@@ -152,12 +157,18 @@ func (a *Agent) WatchEvents(
 	// TUI monitor goroutine
 	go func() {
 		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("claudecode TUI monitor panic (%s): %v", sess.Name, r)
+			}
+		}()
 		ticker := time.NewTicker(a.pollInterval)
 		defer ticker.Stop()
 
 		var prompted string
 		var lastInfoText string
 		var lastQuestionLine string
+		var wasInWizard bool // true after a multi-step wizard dialog is detected
 
 		for {
 			select {
@@ -178,6 +189,9 @@ func (a *Agent) WatchEvents(
 					if prompted != "approval" || question != lastQuestionLine {
 						dialogText := ExtractApprovalText(content)
 						isWizard := IsMultistepWizard(content)
+						if isWizard {
+							wasInWizard = true
+						}
 						nOpts := countOptions(dialogText)
 						onEvent(core.AgentEvent{
 							Type:        core.EventApprovalPrompt,
@@ -190,6 +204,9 @@ func (a *Agent) WatchEvents(
 					}
 				} else if IsTextOptionDialog(content) {
 					question := ExtractQuestionLine(content)
+					if IsMultistepWizard(content) {
+						wasInWizard = true
+					}
 					if prompted != "ask_user" || question != lastQuestionLine {
 						opts := ExtractNonNumberedOptions(content)
 						if len(opts) > 0 {
@@ -201,6 +218,23 @@ func (a *Agent) WatchEvents(
 						}
 						prompted = "ask_user"
 						lastQuestionLine = question
+					}
+				} else if wasInWizard && IsWizardFinalStep(content) {
+					// "Ready to submit your answers?" — final step of a multi-step wizard.
+					// Has numbered options but no standard navigation hints.
+					question := ExtractQuestionLine(content)
+					if prompted != "approval" || question != lastQuestionLine {
+						dialogText := ExtractApprovalText(content)
+						nOpts := countOptions(dialogText)
+						onEvent(core.AgentEvent{
+							Type:        core.EventApprovalPrompt,
+							DialogText:  dialogText,
+							OptionCount: nOpts,
+							IsWizard:    false,
+						})
+						prompted = "approval"
+						lastQuestionLine = question
+						wasInWizard = false
 					}
 				} else if IsInfoPanel(content) {
 					panelText := ExtractInfoPanelText(content)
