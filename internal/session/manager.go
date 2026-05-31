@@ -26,10 +26,10 @@ var agentTmuxTag = map[string]string{
 // Config holds the configuration needed by the Manager.
 type Config struct {
 	TmuxSessionPrefix string
-	SessionsDir       string       // directory for per-session settings files
-	ClaudeProjectsDir string       // ~/.claude/projects
-	NewProjectDir     string       // base directory stripped from DisplayPath in project lists
-	MessageLevel      string       // default for new sessions
+	SessionsDir       string // directory for per-session settings files
+	ClaudeProjectsDir string // ~/.claude/projects
+	NewProjectDir     string // base directory stripped from DisplayPath in project lists
+	MessageLevel      string // default for new sessions
 	JSONLSettleMS     int
 }
 
@@ -38,31 +38,66 @@ type Manager struct {
 	cfg      Config
 	store    store.SessionStore
 	agents   map[string]core.AIAgent
-	platform core.ChatPlatform
+	rootCtx  context.Context // long-lived; parents all session tasks
 
-	mu           sync.RWMutex
-	sessions     map[string]*core.Session
-	chatToSess   map[int64]string
-	cancelFuncs  map[string]context.CancelFunc
+	platformsMu sync.RWMutex
+	platforms   map[string]core.ChatPlatform // keyed by transport ("telegram"|"discord"|"web")
+
+	mu          sync.RWMutex
+	sessions    map[string]*core.Session
+	chatToSess  map[int64]string
+	cancelFuncs map[string]context.CancelFunc
+
+	obsMu     sync.RWMutex
+	observers []func(name string, ev core.AgentEvent)
 }
 
 // New creates a Manager. agents must have at least one entry.
-func New(cfg Config, st store.SessionStore, agents map[string]core.AIAgent, platform core.ChatPlatform) *Manager {
+// rootCtx is used as the parent for all session task goroutines so that
+// session watchers outlive any individual chat-platform driver.
+func New(cfg Config, st store.SessionStore, agents map[string]core.AIAgent, rootCtx context.Context) *Manager {
 	return &Manager{
 		cfg:         cfg,
 		store:       st,
 		agents:      agents,
-		platform:    platform,
+		rootCtx:     rootCtx,
+		platforms:   make(map[string]core.ChatPlatform),
 		sessions:    make(map[string]*core.Session),
 		chatToSess:  make(map[int64]string),
 		cancelFuncs: make(map[string]context.CancelFunc),
 	}
 }
 
-// SetPlatform injects the ChatPlatform after construction.
-// Must be called before Startup.
-func (m *Manager) SetPlatform(p core.ChatPlatform) {
-	m.platform = p
+// RegisterPlatform registers a ChatPlatform for the given transport.
+// Must be called before Startup so that restored sessions can receive output.
+func (m *Manager) RegisterPlatform(transport string, p core.ChatPlatform) {
+	m.platformsMu.Lock()
+	defer m.platformsMu.Unlock()
+	m.platforms[transport] = p
+}
+
+// platformFor returns the ChatPlatform for the session's transport, or nil if not registered.
+// Callers must nil-check before calling Send.
+func (m *Manager) platformFor(sess *core.Session) core.ChatPlatform {
+	m.platformsMu.RLock()
+	defer m.platformsMu.RUnlock()
+	return m.platforms[sess.Transport]
+}
+
+// RegisterObserver registers a callback that is called for every agent event
+// on any session. Used by the scheduler and orchestrator.
+func (m *Manager) RegisterObserver(fn func(name string, ev core.AgentEvent)) {
+	m.obsMu.Lock()
+	defer m.obsMu.Unlock()
+	m.observers = append(m.observers, fn)
+}
+
+func (m *Manager) notifyObservers(name string, ev core.AgentEvent) {
+	m.obsMu.RLock()
+	defer m.obsMu.RUnlock()
+	for _, fn := range m.observers {
+		fn(name, ev)
+	}
 }
 
 // EnabledAgents returns the registered agent type names.
@@ -105,9 +140,11 @@ func (m *Manager) Startup(ctx context.Context) error {
 		} else {
 			m.store.Delete(sess.Name) //nolint:errcheck
 			log.Printf("session %s: directory gone, removed", sess.Name)
-			m.platform.Send(ctx, sess.ChatID, core.Message{ //nolint:errcheck
-				Text: fmt.Sprintf("⚠️ 세션 **%s**의 디렉터리가 없어 삭제했습니다.", sess.Name),
-			}, "")
+			if p := m.platformFor(sess); p != nil {
+				p.Send(ctx, sess.ChatID, core.Message{ //nolint:errcheck
+					Text: fmt.Sprintf("⚠️ 세션 **%s**의 디렉터리가 없어 삭제했습니다.", sess.Name),
+				}, "")
+			}
 		}
 	}
 	return nil
@@ -116,7 +153,8 @@ func (m *Manager) Startup(ctx context.Context) error {
 // ── session CRUD ──────────────────────────────────────────────────────────────
 
 // Create starts a new agent session for cwd.
-func (m *Manager) Create(ctx context.Context, name, cwd string, chatID int64, agentType string) (*core.Session, error) {
+// transport must be "telegram", "discord", or "web".
+func (m *Manager) Create(ctx context.Context, name, cwd string, chatID int64, agentType, transport string) (*core.Session, error) {
 	actual := m.resolveAgentType(agentType)
 	agent := m.agents[actual]
 	tag := agentTmuxTag[actual]
@@ -132,6 +170,7 @@ func (m *Manager) Create(ctx context.Context, name, cwd string, chatID int64, ag
 		CreatedAt: time.Now(),
 		Level:     core.MessageLevel(m.cfg.MessageLevel),
 		AgentType: actual,
+		Transport: transport,
 	}
 
 	existing := agent.OutputSnapshot(sess, m.cfg.ClaudeProjectsDir)
@@ -151,7 +190,8 @@ func (m *Manager) Create(ctx context.Context, name, cwd string, chatID int64, ag
 }
 
 // Resume starts a session attached to an existing agent session ID.
-func (m *Manager) Resume(ctx context.Context, name, cwd string, chatID int64, sessionID, agentType string) (*core.Session, error) {
+// transport must be "telegram", "discord", or "web".
+func (m *Manager) Resume(ctx context.Context, name, cwd string, chatID int64, sessionID, agentType, transport string) (*core.Session, error) {
 	actual := m.resolveAgentType(agentType)
 	agent := m.agents[actual]
 	tag := agentTmuxTag[actual]
@@ -176,6 +216,7 @@ func (m *Manager) Resume(ctx context.Context, name, cwd string, chatID int64, se
 		Level:       core.MessageLevel(m.cfg.MessageLevel),
 		JSONLOffset: offset,
 		AgentType:   actual,
+		Transport:   transport,
 	}
 
 	settingsPath, err := m.writeSessionSettings(sess)
@@ -194,6 +235,7 @@ func (m *Manager) Resume(ctx context.Context, name, cwd string, chatID int64, se
 }
 
 // Attach rebinds a session to a different chat.
+// For web-transport sessions, only ChatID is updated; chatToSess is not modified.
 func (m *Manager) Attach(ctx context.Context, name string, chatID int64) (*core.Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -201,10 +243,12 @@ func (m *Manager) Attach(ctx context.Context, name string, chatID int64) (*core.
 	if !ok {
 		return nil, fmt.Errorf("session not found: %s", name)
 	}
-	old := sess.ChatID
+	if sess.Transport != "web" {
+		old := sess.ChatID
+		delete(m.chatToSess, old)
+		m.chatToSess[chatID] = name
+	}
 	sess.ChatID = chatID
-	delete(m.chatToSess, old)
-	m.chatToSess[chatID] = name
 	m.store.UpdateChatID(name, chatID) //nolint:errcheck
 	return sess, nil
 }
@@ -218,15 +262,17 @@ func (m *Manager) Kill(ctx context.Context, name string) error {
 		return fmt.Errorf("session not found: %s", name)
 	}
 	delete(m.sessions, name)
-	delete(m.chatToSess, sess.ChatID)
+	if sess.Transport != "web" {
+		delete(m.chatToSess, sess.ChatID)
+	}
 	if cancel, ok := m.cancelFuncs[name]; ok {
 		cancel()
 		delete(m.cancelFuncs, name)
 	}
 	m.mu.Unlock()
 
-	m.agentFor(sess).Kill(sess)          //nolint:errcheck
-	m.store.Delete(name)                 //nolint:errcheck
+	m.agentFor(sess).Kill(sess) //nolint:errcheck
+	m.store.Delete(name)        //nolint:errcheck
 	return nil
 }
 
@@ -275,12 +321,33 @@ func (m *Manager) SendInput(sess *core.Session, text string) error {
 	return m.agentFor(sess).SendInput(sess, text)
 }
 
+// SendInputBy resolves a session by name and sends input. Useful for the
+// scheduler and orchestrator which address sessions by name.
+func (m *Manager) SendInputBy(name, text string) error {
+	sess := m.Get(name)
+	if sess == nil {
+		return fmt.Errorf("session not found: %s", name)
+	}
+	return m.agentFor(sess).SendInput(sess, text)
+}
+
 func (m *Manager) SendKey(sess *core.Session, key string) error {
 	return m.agentFor(sess).SendKey(sess, key)
 }
 
 func (m *Manager) Capture(sess *core.Session) (string, error) {
 	return m.agentFor(sess).Capture(sess)
+}
+
+// DeliverToSession sends a message to a session via its registered transport platform.
+// Used by the scheduler for status reports so it never calls platform.Send directly.
+func (m *Manager) DeliverToSession(ctx context.Context, name string, msg core.Message) error {
+	sess := m.Get(name)
+	if sess == nil {
+		return fmt.Errorf("session not found: %s", name)
+	}
+	m.sendSessionMsg(ctx, sess, msg)
+	return nil
 }
 
 func (m *Manager) ListProjects(agentType string) ([]core.Project, error) {
@@ -320,15 +387,22 @@ func (m *Manager) SetMessageLevel(ctx context.Context, sess *core.Session, level
 
 // ── private ───────────────────────────────────────────────────────────────────
 
+// register inserts sess into the in-memory maps.
+// For web-transport sessions, chatToSess is NOT updated because web sessions
+// are addressed by Name, not by ChatID.
 func (m *Manager) register(sess *core.Session) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sessions[sess.Name] = sess
-	m.chatToSess[sess.ChatID] = sess.Name
+	if sess.Transport != "web" {
+		m.chatToSess[sess.ChatID] = sess.Name
+	}
 }
 
 func (m *Manager) startTasks(ctx context.Context, sess *core.Session, existing map[string]struct{}) {
-	taskCtx, cancel := context.WithCancel(ctx)
+	// Use m.rootCtx (not the caller's ctx) so that session watchers outlive
+	// any individual chat-platform driver (e.g. bot shutdown).
+	taskCtx, cancel := context.WithCancel(m.rootCtx)
 
 	m.mu.Lock()
 	if old, ok := m.cancelFuncs[sess.Name]; ok {
@@ -354,6 +428,9 @@ func (m *Manager) startTasks(ctx context.Context, sess *core.Session, existing m
 		}
 
 		onEvent := func(event core.AgentEvent) {
+			// Notify scheduler/orchestrator observers before formatting/routing.
+			m.notifyObservers(sess.Name, event)
+
 			msgs := formatter.FormatEvent(event)
 			var toSend []core.Message
 			for _, msg := range msgs {
@@ -400,9 +477,11 @@ func (m *Manager) restoreSession(ctx context.Context, sess *core.Session) {
 	m.register(sess)
 	m.startTasks(ctx, sess, nil)
 	log.Printf("restored session %s", sess.Name)
-	m.platform.Send(ctx, sess.ChatID, core.Message{ //nolint:errcheck
-		Text: fmt.Sprintf("🔄 세션 **%s**을 복구했습니다.", sess.Name),
-	}, "")
+	if p := m.platformFor(sess); p != nil {
+		p.Send(ctx, sess.ChatID, core.Message{ //nolint:errcheck
+			Text: fmt.Sprintf("🔄 세션 **%s**을 복구했습니다.", sess.Name),
+		}, "")
+	}
 }
 
 func (m *Manager) sendSessionMsg(ctx context.Context, sess *core.Session, msg core.Message) {
@@ -436,7 +515,12 @@ func (m *Manager) sendSessionMsg(ctx context.Context, sess *core.Session, msg co
 		prefix = sess.Name
 	}
 
-	if err := m.platform.Send(ctx, sess.ChatID, msg, prefix); err != nil {
+	p := m.platformFor(sess)
+	if p == nil {
+		// Platform not registered (e.g. web disabled, or session from previous run).
+		return
+	}
+	if err := p.Send(ctx, sess.ChatID, msg, prefix); err != nil {
 		log.Printf("platform send error (session %s): %v", sess.Name, err)
 	}
 }

@@ -92,7 +92,10 @@ func newManager(t *testing.T) (*session.Manager, *mockAgent, *mockPlatform) {
 		MessageLevel:      "all",
 		JSONLSettleMS:     0,
 	}
-	mgr := session.New(cfg, memory.New(), map[string]core.AIAgent{"claude_code": agent}, platform)
+	rootCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	mgr := session.New(cfg, memory.New(), map[string]core.AIAgent{"claude_code": agent}, rootCtx)
+	mgr.RegisterPlatform("telegram", platform)
 	return mgr, agent, platform
 }
 
@@ -103,10 +106,11 @@ func TestCreate_RegistersSession(t *testing.T) {
 	defer cancel()
 
 	mgr, _, _ := newManager(t)
-	sess, err := mgr.Create(ctx, "myproj", "/tmp/myproj", 42, "")
+	sess, err := mgr.Create(ctx, "myproj", "/tmp/myproj", 42, "", "telegram")
 	require.NoError(t, err)
 	assert.Equal(t, "myproj", sess.Name)
 	assert.Equal(t, int64(42), sess.ChatID)
+	assert.Equal(t, "telegram", sess.Transport)
 
 	got := mgr.Get("myproj")
 	require.NotNil(t, got)
@@ -118,7 +122,7 @@ func TestCreate_FindableByChat(t *testing.T) {
 	defer cancel()
 
 	mgr, _, _ := newManager(t)
-	mgr.Create(ctx, "proj", "/tmp/proj", 99, "") //nolint:errcheck
+	mgr.Create(ctx, "proj", "/tmp/proj", 99, "", "telegram") //nolint:errcheck
 
 	got := mgr.GetByChat(99)
 	require.NotNil(t, got)
@@ -130,7 +134,7 @@ func TestKill_RemovesSession(t *testing.T) {
 	defer cancel()
 
 	mgr, _, _ := newManager(t)
-	mgr.Create(ctx, "proj", "/tmp/proj", 5, "") //nolint:errcheck
+	mgr.Create(ctx, "proj", "/tmp/proj", 5, "", "telegram") //nolint:errcheck
 
 	require.NoError(t, mgr.Kill(ctx, "proj"))
 	assert.Nil(t, mgr.Get("proj"))
@@ -142,7 +146,7 @@ func TestAttach_RebinskChat(t *testing.T) {
 	defer cancel()
 
 	mgr, _, _ := newManager(t)
-	mgr.Create(ctx, "proj", "/tmp/proj", 1, "") //nolint:errcheck
+	mgr.Create(ctx, "proj", "/tmp/proj", 1, "", "telegram") //nolint:errcheck
 
 	_, err := mgr.Attach(ctx, "proj", 2)
 	require.NoError(t, err)
@@ -155,7 +159,7 @@ func TestSendInput_DelegatesToAgent(t *testing.T) {
 	defer cancel()
 
 	mgr, agent, _ := newManager(t)
-	sess, _ := mgr.Create(ctx, "p", "/tmp/p", 7, "")
+	sess, _ := mgr.Create(ctx, "p", "/tmp/p", 7, "", "telegram")
 	require.NoError(t, mgr.SendInput(sess, "hello"))
 
 	agent.mu.Lock()
@@ -168,7 +172,7 @@ func TestSendKey_DelegatesToAgent(t *testing.T) {
 	defer cancel()
 
 	mgr, agent, _ := newManager(t)
-	sess, _ := mgr.Create(ctx, "p", "/tmp/p", 8, "")
+	sess, _ := mgr.Create(ctx, "p", "/tmp/p", 8, "", "telegram")
 	require.NoError(t, mgr.SendKey(sess, "1"))
 
 	agent.mu.Lock()
@@ -181,8 +185,8 @@ func TestListAll(t *testing.T) {
 	defer cancel()
 
 	mgr, _, _ := newManager(t)
-	mgr.Create(ctx, "a", "/tmp/a", 1, "") //nolint:errcheck
-	mgr.Create(ctx, "b", "/tmp/b", 2, "") //nolint:errcheck
+	mgr.Create(ctx, "a", "/tmp/a", 1, "", "telegram") //nolint:errcheck
+	mgr.Create(ctx, "b", "/tmp/b", 2, "", "telegram") //nolint:errcheck
 
 	list := mgr.ListAll()
 	assert.Len(t, list, 2)
@@ -193,13 +197,13 @@ func TestSetMessageLevel(t *testing.T) {
 	defer cancel()
 
 	mgr, _, _ := newManager(t)
-	sess, _ := mgr.Create(ctx, "p", "/tmp/p", 3, "")
+	sess, _ := mgr.Create(ctx, "p", "/tmp/p", 3, "", "telegram")
 	require.NoError(t, mgr.SetMessageLevel(ctx, sess, "interactive"))
 	assert.Equal(t, core.LevelInteractive, sess.Level)
 }
 
 func TestStartup_ReconnectsLiveSessions(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	rootCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	agent := &mockAgent{existing: true}
@@ -223,12 +227,70 @@ func TestStartup_ReconnectsLiveSessions(t *testing.T) {
 		CreatedAt: time.Now(),
 		Level:     core.LevelAll,
 		AgentType: "claude_code",
+		Transport: "telegram",
 	})
 
-	mgr := session.New(cfg, st, map[string]core.AIAgent{"claude_code": agent}, platform)
-	require.NoError(t, mgr.Startup(ctx))
+	mgr := session.New(cfg, st, map[string]core.AIAgent{"claude_code": agent}, rootCtx)
+	mgr.RegisterPlatform("telegram", platform)
+	require.NoError(t, mgr.Startup(rootCtx))
 
 	// A short wait for the background goroutine to register the session
 	time.Sleep(10 * time.Millisecond)
 	assert.NotNil(t, mgr.Get("alive"))
+}
+
+// TestWebSession_NotInChatToSess verifies that web-transport sessions do not
+// participate in chatToSess routing.
+func TestWebSession_NotInChatToSess(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr, _, _ := newManager(t)
+	// Create a web session with a synthetic ChatID
+	_, err := mgr.Create(ctx, "websess", "/tmp/ws", 1<<40+1, "", "web")
+	require.NoError(t, err)
+
+	// Web sessions are findable by name but NOT by chatID
+	assert.NotNil(t, mgr.Get("websess"))
+	assert.Nil(t, mgr.GetByChat(1<<40+1), "web session must not appear in chatToSess")
+}
+
+// TestWebSession_NilPlatformNoPanic ensures a web session with no web platform
+// registered does not panic when events would normally send output.
+func TestWebSession_NilPlatformNoPanic(t *testing.T) {
+	rootCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	agent := &mockAgent{existing: true}
+	st := memory.New()
+	cfg := session.Config{
+		TmuxSessionPrefix: "tc-",
+		SessionsDir:       t.TempDir(),
+		ClaudeProjectsDir: t.TempDir(),
+		MessageLevel:      "all",
+	}
+
+	// Store a web session (no web platform registered)
+	st.Save(&core.Session{ //nolint:errcheck
+		Name:      "webonly",
+		TmuxName:  "tc-CL-webonly",
+		SessionID: "sess-web",
+		CWD:       "/tmp/webonly",
+		JSONLPath: "/tmp/webonly.jsonl",
+		ChatID:    1 << 40,
+		CreatedAt: time.Now(),
+		Level:     core.LevelAll,
+		AgentType: "claude_code",
+		Transport: "web",
+	})
+
+	mgr := session.New(cfg, st, map[string]core.AIAgent{"claude_code": agent}, rootCtx)
+	// Deliberately do NOT register a "web" platform.
+	// Startup should not panic even when platformFor returns nil.
+	require.NotPanics(t, func() {
+		mgr.Startup(rootCtx) //nolint:errcheck
+	})
+
+	time.Sleep(10 * time.Millisecond)
+	assert.NotNil(t, mgr.Get("webonly"))
 }

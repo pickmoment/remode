@@ -14,10 +14,18 @@ type Config struct {
 	Platform string         `toml:"platform"`
 	Telegram TelegramConfig `toml:"telegram"`
 	Discord  DiscordConfig  `toml:"discord"`
+	Web      WebConfig      `toml:"web"`
 	Paths    PathsConfig    `toml:"paths"`
 	Tmux     TmuxConfig     `toml:"tmux"`
 	Monitor  MonitorConfig  `toml:"monitor"`
 	Agents   AgentsConfig   `toml:"agents"`
+}
+
+// WebConfig configures the built-in HTTP management service.
+type WebConfig struct {
+	Enabled    bool   `toml:"enabled"`
+	ListenAddr string `toml:"listen_addr"` // e.g. "127.0.0.1:8765"
+	AuthToken  string `toml:"auth_token"`  // Bearer token; required when enabled
 }
 
 type TelegramConfig struct {
@@ -26,9 +34,10 @@ type TelegramConfig struct {
 }
 
 type DiscordConfig struct {
-	Token             string  `toml:"token"`
-	AllowedUserIDs    []int64 `toml:"allowed_user_ids"`
-	NotifyChannelIDs  []int64 `toml:"notify_channel_ids"`
+	Token            string  `toml:"token"`
+	GuildID          string  `toml:"guild_id"`
+	AllowedUserIDs   []int64 `toml:"allowed_user_ids"`
+	NotifyChannelIDs []int64 `toml:"notify_channel_ids"`
 }
 
 type PathsConfig struct {
@@ -46,6 +55,10 @@ type MonitorConfig struct {
 	PlanBannerPollMS int    `toml:"plan_banner_poll_ms"`
 	JSONLSettleMS    int    `toml:"jsonl_settle_ms"`
 	MessageLevel     string `toml:"message_level"`
+	// TurnIdleMS is the duration of silence after the last agent event before a
+	// session is considered "turn-idle". Used by the orchestrator for chain/DAG.
+	// Must be greater than typical inter-event gaps within a turn.
+	TurnIdleMS int `toml:"turn_idle_ms"`
 }
 
 type AgentsConfig struct {
@@ -79,6 +92,10 @@ func defaults() *Config {
 	home, _ := os.UserHomeDir()
 	return &Config{
 		Platform: "telegram",
+		Web: WebConfig{
+			Enabled:    false,
+			ListenAddr: "127.0.0.1:8765",
+		},
 		Paths: PathsConfig{
 			DB:                filepath.Join(home, ".remode", "sessions.db"),
 			NewProjectDir:     filepath.Join(home, "projects"),
@@ -92,6 +109,7 @@ func defaults() *Config {
 			PlanBannerPollMS: 500,
 			JSONLSettleMS:    100,
 			MessageLevel:     "interactive",
+			TurnIdleMS:       4000,
 		},
 		Agents: AgentsConfig{
 			Enabled: []string{"claude_code"},

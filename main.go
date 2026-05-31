@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -18,11 +19,19 @@ import (
 	"github.com/pickmoment/remode/internal/agent/codex"
 	"github.com/pickmoment/remode/internal/config"
 	"github.com/pickmoment/remode/internal/core"
+	"github.com/pickmoment/remode/internal/orchestrator"
 	"github.com/pickmoment/remode/internal/platform/discord"
 	"github.com/pickmoment/remode/internal/platform/telegram"
+	"github.com/pickmoment/remode/internal/platform/web"
+	"github.com/pickmoment/remode/internal/scheduler"
 	"github.com/pickmoment/remode/internal/session"
 	"github.com/pickmoment/remode/internal/store/sqlite"
 )
+
+// botDriver is the common interface implemented by telegram.BotInstance and discord.BotInstance.
+type botDriver interface {
+	Run(ctx context.Context, sm *session.Manager) error
+}
 
 func main() {
 	cfgPath := flag.String("config", config.DefaultConfigPath(), "path to config.toml")
@@ -80,10 +89,13 @@ func main() {
 		log.Fatal("no agents enabled — add 'claude_code' to [agents] enabled list")
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// Root context: outlives any individual chat platform driver.
+	// Session task goroutines are parented here so shutting down a bot driver
+	// does not orphan web or scheduler sessions.
+	rootCtx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// Build session manager (platform injected by telegram.Run before startup)
+	// Build session manager (no platform yet; platforms are registered below)
 	mgr := session.New(session.Config{
 		TmuxSessionPrefix: cfg.Tmux.SessionPrefix,
 		SessionsDir:       cfg.Paths.SessionsDir,
@@ -91,37 +103,122 @@ func main() {
 		NewProjectDir:     cfg.Paths.NewProjectDir,
 		MessageLevel:      cfg.Monitor.MessageLevel,
 		JSONLSettleMS:     cfg.Monitor.JSONLSettleMS,
-	}, store, agents, nil)
+	}, store, agents, rootCtx)
+
+	// Backfill transport for sessions created before transport tracking was added.
+	if err := store.BackfillTransport(cfg.Platform); err != nil {
+		log.Printf("backfill transport: %v", err)
+	}
+
+	// ── Option A: construct all drivers synchronously → register platforms →
+	//             Startup → launch blocking Run loops in goroutines ──────────
+	//
+	// This guarantees all platforms are registered before Startup tries to
+	// send notifications for restored sessions.
+
+	var driver botDriver
 
 	switch cfg.Platform {
 	case "telegram":
 		if cfg.Telegram.Token == "" {
 			log.Fatal("telegram.token is required")
 		}
-		runCfg := telegram.RunConfig{
+		bot, err := telegram.NewBot(telegram.RunConfig{
 			Token:          cfg.Telegram.Token,
 			AllowedUserIDs: cfg.Telegram.AllowedUserIDs,
 			NewProjectDir:  cfg.Paths.NewProjectDir,
+		})
+		if err != nil {
+			log.Fatalf("telegram init: %v", err)
 		}
-		if err := telegram.Run(ctx, runCfg, mgr, mgr.SetPlatform); err != nil && err != context.Canceled {
-			log.Fatalf("telegram bot error: %v", err)
-		}
+		mgr.RegisterPlatform("telegram", bot.ChatPlatform())
+		driver = bot
+
 	case "discord":
 		if cfg.Discord.Token == "" {
 			log.Fatal("discord.token is required")
 		}
-		runCfg := discord.RunConfig{
+		bot, err := discord.NewBot(discord.RunConfig{
 			Token:            cfg.Discord.Token,
+			GuildID:          cfg.Discord.GuildID,
 			AllowedUserIDs:   cfg.Discord.AllowedUserIDs,
 			NotifyChannelIDs: cfg.Discord.NotifyChannelIDs,
 			NewProjectDir:    cfg.Paths.NewProjectDir,
+		})
+		if err != nil {
+			log.Fatalf("discord init: %v", err)
 		}
-		if err := discord.Run(ctx, runCfg, mgr, mgr.SetPlatform); err != nil && err != context.Canceled {
-			log.Fatalf("discord bot error: %v", err)
-		}
+		mgr.RegisterPlatform("discord", bot.ChatPlatform())
+		driver = bot
+
 	default:
 		log.Fatalf("unsupported platform: %q (supported: telegram, discord)", cfg.Platform)
 	}
+
+	// Restore persisted sessions (all platforms already registered above).
+	if err := mgr.Startup(rootCtx); err != nil {
+		log.Printf("startup error: %v", err)
+	}
+
+	// ── Phase 4: TurnTracker + Orchestrator ──────────────────────────────────
+	tracker := orchestrator.NewTurnTracker(cfg.Monitor.TurnIdleMS, nil)
+	mgr.RegisterObserver(tracker.OnEvent)
+
+	dagEngine := orchestrator.NewDAGEngine(store, mgr, tracker)
+	orc := orchestrator.New(mgr, tracker)
+
+	// TurnTracker tick loop — promotes ACTIVE→IDLE after silence.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		tracker.Run(rootCtx)
+	}()
+
+	// Resume any persisted "running" workflow runs after Startup.
+	if err := dagEngine.ResumeRuns(rootCtx); err != nil {
+		log.Printf("dag resume: %v", err)
+	}
+
+	// ── Phase 3: Scheduler ────────────────────────────────────────────────────
+	sched := scheduler.New(store, mgr, nil)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := sched.Start(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Printf("scheduler error: %v", err)
+		}
+	}()
+
+	// ── Launch the chat bot driver ────────────────────────────────────────────
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := driver.Run(rootCtx, mgr); err != nil && !errors.Is(err, context.Canceled) {
+			log.Printf("bot error: %v", err)
+			cancel()
+		}
+	}()
+
+	// ── Phase 2: web management service ──────────────────────────────────────
+	if cfg.Web.Enabled {
+		webPlatform := web.New()
+		mgr.RegisterPlatform("web", webPlatform)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := web.Run(rootCtx, web.RunConfig{
+				ListenAddr:    cfg.Web.ListenAddr,
+				AuthToken:     cfg.Web.AuthToken,
+				NewProjectDir: cfg.Paths.NewProjectDir,
+			}, mgr, webPlatform, sched, dagEngine, orc); err != nil && !errors.Is(err, context.Canceled) {
+				log.Printf("web server error: %v", err)
+				cancel()
+			}
+		}()
+	}
+
+	wg.Wait()
 }
 
 // runInTmux starts remode in a detached tmux session named `name`.

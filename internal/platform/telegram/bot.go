@@ -18,42 +18,53 @@ type RunConfig struct {
 	NewProjectDir  string
 }
 
-// Run starts the Telegram bot. It creates the platform, calls sm.Startup, then
-// runs the update loop until ctx is cancelled or /shutdown is received.
-func Run(ctx context.Context, cfg RunConfig, sm *session.Manager, setPlatform func(core.ChatPlatform)) error {
+// BotInstance holds a constructed Telegram bot instance ready to Run.
+// Construct with NewBot, register ChatPlatform() with the session manager,
+// then call Run after sm.Startup.
+type BotInstance struct {
+	platform *Platform
+	bot      *tgbotapi.BotAPI
+	cfg      RunConfig
+}
+
+// NewBot creates the Telegram BotAPI connection and platform.
+// Returns an instance whose ChatPlatform() can be registered with the Manager.
+func NewBot(cfg RunConfig) (*BotInstance, error) {
 	bot, err := tgbotapi.NewBotAPI(cfg.Token)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	log.Printf("Telegram bot authorised as @%s", bot.Self.UserName)
+	return &BotInstance{
+		platform: NewPlatform(bot),
+		bot:      bot,
+		cfg:      cfg,
+	}, nil
+}
 
-	platform := NewPlatform(bot)
-	// Let main inject the platform into the session manager before startup
-	if setPlatform != nil {
-		setPlatform(platform)
-	}
+// ChatPlatform returns the core.ChatPlatform for registration with the Manager.
+func (b *BotInstance) ChatPlatform() core.ChatPlatform { return b.platform }
 
-	if err := sm.Startup(ctx); err != nil {
-		log.Printf("startup error: %v", err)
-	}
-
+// Run starts the Telegram update loop. Must be called after sm.Startup.
+// Blocks until ctx is cancelled or /shutdown is received.
+func (b *BotInstance) Run(ctx context.Context, sm *session.Manager) error {
 	stopCh := make(chan struct{})
 	bd := &BotData{
 		SM:  sm,
-		Bot: bot,
+		Bot: b.bot,
 		Config: handlerConfig{
-			AllowedUserIDs: cfg.AllowedUserIDs,
-			NewProjectDir:  cfg.NewProjectDir,
+			AllowedUserIDs: b.cfg.AllowedUserIDs,
+			NewProjectDir:  b.cfg.NewProjectDir,
 		},
 		StopCh: stopCh,
 	}
 
-	// Notify all known sessions about the bot restart
-	go notifyStartup(ctx, platform, sm)
+	// Notify telegram sessions that the bot restarted.
+	go notifyStartup(ctx, b.platform, sm)
 
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
-	updates := bot.GetUpdatesChan(u)
+	updates := b.bot.GetUpdatesChan(u)
 
 	for {
 		select {
@@ -126,10 +137,14 @@ func handleUpdate(ctx context.Context, upd tgbotapi.Update, bd *BotData) {
 	}
 }
 
+// notifyStartup sends a restart notice to all telegram-transport sessions.
 func notifyStartup(ctx context.Context, platform core.ChatPlatform, sm *session.Manager) {
 	sessions := sm.ListAll()
 	seen := make(map[int64]bool)
 	for _, sess := range sessions {
+		if sess.Transport != "telegram" {
+			continue
+		}
 		if !seen[sess.ChatID] {
 			seen[sess.ChatID] = true
 			platform.Send(ctx, sess.ChatID, core.Message{ //nolint:errcheck

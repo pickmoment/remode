@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>remode</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Menlo','Consolas',monospace; background: #f5f5f5; color: #1a1a1a; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+    /* ── nav ── */
+    #nav { background: #fff; border-bottom: 1px solid #ddd; display: flex; align-items: center; padding: 0 16px; gap: 2px; flex-shrink: 0; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+    #nav .logo { color: #1a6fa8; font-weight: bold; font-size: 14px; padding: 12px 16px 12px 0; margin-right: 8px; border-right: 1px solid #e0e0e0; }
+    .tab-btn { padding: 12px 16px; background: none; border: none; border-bottom: 2px solid transparent; color: #888; font-family: inherit; font-size: 13px; cursor: pointer; transition: color .15s; }
+    .tab-btn:hover { color: #333; }
+    .tab-btn.active { color: #1a6fa8; border-bottom-color: #1a6fa8; }
+
+    /* ── layout ── */
+    #content { flex: 1; overflow: hidden; display: flex; }
+    .tab-panel { display: none; flex: 1; overflow: hidden; }
+    .tab-panel.active { display: flex; }
+
+    /* ── sessions tab ── */
+    #tab-sessions { flex-direction: row; }
+    #sidebar { width: 240px; min-width: 200px; background: #fff; border-right: 1px solid #ddd; display: flex; flex-direction: column; flex-shrink: 0; }
+    #sidebar-hdr { padding: 12px 16px; font-size: 13px; color: #666; border-bottom: 1px solid #eee; display: flex; align-items: center; }
+    #sidebar-hdr span { flex: 1; }
+    #session-list { flex: 1; overflow-y: auto; }
+    .session-item { padding: 10px 16px; cursor: pointer; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
+    .session-item:hover { background: #f8f9fa; }
+    .session-item.active { background: #e8f2fa; }
+    .session-name { font-weight: bold; color: #1a6fa8; }
+    .session-meta { font-size: 11px; color: #999; margin-top: 2px; }
+    #new-sess-btn { padding: 11px 16px; background: #f0faf0; border: none; border-top: 1px solid #ddd; color: #2a7a2a; font-family: inherit; font-size: 13px; cursor: pointer; text-align: left; }
+    #new-sess-btn:hover { background: #e4f4e4; }
+    #sess-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    #toolbar { background: #fff; border-bottom: 1px solid #ddd; padding: 8px 14px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    #toolbar .sess-title { font-size: 13px; color: #1a6fa8; font-weight: bold; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #output { flex: 1; overflow-y: auto; padding: 12px 16px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; background: #fafafa; }
+    .msg-line { margin-bottom: 3px; }
+    .msg-line.tool { color: #aaa; }
+    .msg-line.interactive { color: #a06a00; }
+    .msg-prefix { color: #bbb; font-size: 11px; }
+    #input-row { display: flex; border-top: 1px solid #ddd; background: #fff; }
+    #input-text { flex: 1; background: #fff; border: none; outline: none; color: #1a1a1a; font-family: inherit; font-size: 13px; padding: 10px 14px; }
+    #placeholder { flex: 1; display: flex; align-items: center; justify-content: center; color: #ccc; font-size: 14px; }
+
+    /* ── table tabs ── */
+    .table-tab { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 16px; background: #f5f5f5; }
+    .card { background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
+    .card-hdr { padding: 10px 16px; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 8px; background: #fafafa; }
+    .card-hdr h3 { font-size: 13px; color: #666; font-weight: normal; flex: 1; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th { padding: 8px 12px; text-align: left; color: #999; font-weight: normal; border-bottom: 1px solid #eee; white-space: nowrap; background: #fafafa; }
+    td { padding: 8px 12px; border-bottom: 1px solid #f3f3f3; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f8f9fa; }
+    .empty td { text-align: center; color: #ccc; padding: 28px; }
+    .actions { display: flex; gap: 4px; flex-wrap: wrap; }
+
+    /* ── orchestrate tab ── */
+    #tab-orchestrate { flex-direction: column; overflow-y: auto; background: #f5f5f5; }
+    .orc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 18px; }
+    .orc-card { background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 16px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
+    .orc-card h3 { font-size: 13px; color: #1a6fa8; }
+    .orc-card p { font-size: 11px; color: #aaa; }
+    .sess-checks { display: flex; flex-direction: column; gap: 5px; max-height: 130px; overflow-y: auto; padding: 4px; background: #fafafa; border: 1px solid #e8e8e8; border-radius: 3px; }
+    .sess-checks label { display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
+    .orc-result { background: #fafafa; border: 1px solid #e8e8e8; padding: 8px 10px; border-radius: 4px; font-size: 12px; min-height: 36px; white-space: pre-wrap; color: #666; }
+
+    /* ── buttons ── */
+    .btn { padding: 4px 10px; font-size: 12px; font-family: inherit; background: #fff; border: 1px solid #d0d0d0; color: #444; cursor: pointer; border-radius: 3px; white-space: nowrap; }
+    .btn:hover { background: #f5f5f5; border-color: #bbb; }
+    .btn.primary { background: #1a6fa8; border-color: #1560a0; color: #fff; }
+    .btn.primary:hover { background: #1560a0; }
+    .btn.success { background: #2a7a2a; border-color: #236823; color: #fff; }
+    .btn.success:hover { background: #236823; }
+    .btn.danger { border-color: #d0a0a0; color: #a03030; }
+    .btn.danger:hover { background: #fdf0f0; border-color: #c07070; }
+    .btn.send { padding: 10px 16px; background: #1a6fa8; border: none; color: #fff; font-size: 13px; }
+    .btn.send:hover { background: #1560a0; }
+    select.inline { padding: 3px 6px; font-size: 12px; font-family: inherit; background: #fff; border: 1px solid #d0d0d0; color: #444; border-radius: 3px; cursor: pointer; }
+
+    /* ── badges ── */
+    .badge { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px; white-space: nowrap; }
+    .badge.running  { background: #e6f4e6; color: #2a7a2a; }
+    .badge.done     { background: #e6f0fa; color: #1a6fa8; }
+    .badge.failed   { background: #fae6e6; color: #a03030; }
+    .badge.pending  { background: #faf6e0; color: #8a7a00; }
+    .badge.waiting  { background: #f0f0f0; color: #888; }
+    .badge.skipped  { background: #f0f0f0; color: #aaa; }
+    .badge.on       { background: #e6f4e6; color: #2a7a2a; }
+    .badge.off      { background: #f0f0f0; color: #aaa; }
+
+    /* ── forms ── */
+    .fg { display: flex; flex-direction: column; gap: 4px; }
+    .fg label { font-size: 11px; color: #888; }
+    .fg input, .fg select, .fg textarea { padding: 6px 9px; background: #fff; border: 1px solid #d8d8d8; color: #1a1a1a; font-family: inherit; font-size: 12px; outline: none; border-radius: 3px; }
+    .fg textarea { resize: vertical; min-height: 56px; }
+    .fg input:focus, .fg select:focus, .fg textarea:focus { border-color: #1a6fa8; box-shadow: 0 0 0 2px rgba(26,111,168,.1); }
+    .frow { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .cb-row { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+    .cb-row input[type=checkbox] { width: 14px; height: 14px; accent-color: #1a6fa8; }
+    .hint { font-size: 10px; color: #bbb; }
+    .sec-label { font-size: 11px; color: #1a6fa8; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-top: 2px; }
+
+    /* ── modals ── */
+    .backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.35); align-items: flex-start; justify-content: center; z-index: 50; overflow-y: auto; padding: 32px 16px; }
+    .backdrop.open { display: flex; }
+    .modal { background: #fff; border: 1px solid #ddd; border-radius: 8px; width: 100%; max-width: 540px; box-shadow: 0 8px 32px rgba(0,0,0,.12); }
+    .modal.wide { max-width: 680px; }
+    .modal-hdr { padding: 14px 18px; border-bottom: 1px solid #eee; display: flex; align-items: center; background: #fafafa; border-radius: 8px 8px 0 0; }
+    .modal-hdr h3 { font-size: 13px; color: #1a6fa8; flex: 1; }
+    .modal-body { padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+    .modal-foot { padding: 12px 18px; border-top: 1px solid #eee; display: flex; justify-content: flex-end; gap: 8px; background: #fafafa; border-radius: 0 0 8px 8px; }
+
+    /* ── dynamic node/edge items ── */
+    .dyn-list { display: flex; flex-direction: column; gap: 8px; }
+    .dyn-item { background: #fafafa; border: 1px solid #e8e8e8; border-radius: 4px; padding: 10px 10px 10px 12px; display: flex; flex-direction: column; gap: 8px; position: relative; }
+    .dyn-item .rm { position: absolute; top: 7px; right: 8px; background: none; border: none; color: #ccc; cursor: pointer; font-size: 13px; line-height: 1; padding: 2px 4px; }
+    .dyn-item .rm:hover { color: #a03030; }
+
+    /* ── auth overlay ── */
+    #auth { position: fixed; inset: 0; background: #f0f4f8; display: flex; align-items: center; justify-content: center; z-index: 100; }
+    #auth-box { background: #fff; border: 1px solid #ddd; padding: 28px 32px; border-radius: 8px; min-width: 300px; box-shadow: 0 4px 16px rgba(0,0,0,.1); }
+    #auth-box h2 { margin-bottom: 16px; color: #1a6fa8; font-size: 18px; }
+    #auth-box input { width: 100%; padding: 8px 10px; background: #fafafa; border: 1px solid #d8d8d8; color: #1a1a1a; font-family: inherit; font-size: 13px; outline: none; margin-bottom: 10px; border-radius: 3px; }
+    #auth-box button { width: 100%; padding: 10px; background: #1a6fa8; border: none; color: #fff; font-family: inherit; font-size: 13px; cursor: pointer; border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<div id="auth">
+  <div id="auth-box">
+    <h2>remode</h2>
+    <input type="password" id="token-input" placeholder="Auth token" />
+    <button onclick="login()">접속</button>
+  </div>
+</div>
+
+<nav id="nav">
+  <span class="logo">remode</span>
+  <button class="tab-btn active"  data-tab="sessions"     onclick="switchTab(this)">세션</button>
+  <button class="tab-btn"         data-tab="schedules"    onclick="switchTab(this)">스케줄</button>
+  <button class="tab-btn"         data-tab="workflows"    onclick="switchTab(this)">워크플로우</button>
+  <button class="tab-btn"         data-tab="orchestrate"  onclick="switchTab(this)">오케스트레이션</button>
+</nav>
+
+<div id="content">
+
+  <!-- ── Sessions ── -->
+  <div id="tab-sessions" class="tab-panel active">
+    <div id="sidebar">
+      <div id="sidebar-hdr"><span>세션</span></div>
+      <div id="session-list"></div>
+      <button id="new-sess-btn" onclick="openModal('m-newsess')">＋ 새 세션</button>
+    </div>
+    <div id="sess-main">
+      <div id="placeholder">세션을 선택하세요</div>
+    </div>
+  </div>
+
+  <!-- ── Schedules ── -->
+  <div id="tab-schedules" class="tab-panel">
+    <div class="table-tab">
+      <div class="card">
+        <div class="card-hdr">
+          <h3>스케줄</h3>
+          <button class="btn success" onclick="openSchedModal(null)">＋ 새 스케줄</button>
+        </div>
+        <table>
+          <thead><tr><th>이름</th><th>액션</th><th>Cron</th><th>대상</th><th>마지막 실행</th><th>다음 실행</th><th>상태</th><th></th></tr></thead>
+          <tbody id="sched-tbody"><tr class="empty"><td colspan="8">불러오는 중…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Workflows ── -->
+  <div id="tab-workflows" class="tab-panel">
+    <div class="table-tab">
+      <div class="card">
+        <div class="card-hdr">
+          <h3>워크플로우</h3>
+          <button class="btn success" onclick="openWfModal(null)">＋ 새 워크플로우</button>
+        </div>
+        <table>
+          <thead><tr><th>이름</th><th>노드</th><th>상태</th><th></th></tr></thead>
+          <tbody id="wf-tbody"><tr class="empty"><td colspan="4">불러오는 중…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="card" id="card-runs" style="display:none">
+        <div class="card-hdr">
+          <h3 id="runs-title">실행 이력</h3>
+          <button class="btn" onclick="document.getElementById('card-runs').style.display='none'">닫기</button>
+        </div>
+        <table>
+          <thead><tr><th>Run ID</th><th>상태</th><th>시작</th><th></th></tr></thead>
+          <tbody id="runs-tbody"></tbody>
+        </table>
+      </div>
+      <div class="card" id="card-nodes" style="display:none">
+        <div class="card-hdr">
+          <h3 id="nodes-title">노드 상태</h3>
+          <button class="btn" onclick="document.getElementById('card-nodes').style.display='none'">닫기</button>
+        </div>
+        <table>
+          <thead><tr><th>노드</th><th>상태</th><th>업데이트</th></tr></thead>
+          <tbody id="noderun-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Orchestrate ── -->
+  <div id="tab-orchestrate" class="tab-panel">
+    <div class="orc-grid">
+      <div class="orc-card">
+        <h3>브로드캐스트</h3>
+        <p>여러 세션에 동시에 프롬프트를 전송합니다.</p>
+        <div class="fg"><label>대상 세션</label><div class="sess-checks" id="bc-sess"></div></div>
+        <div class="fg"><label>프롬프트</label><textarea id="bc-prompt" placeholder="전송할 메시지"></textarea></div>
+        <button class="btn primary" onclick="runBroadcast()">전송</button>
+        <div class="orc-result" id="bc-result">—</div>
+      </div>
+      <div class="orc-card">
+        <h3>체인</h3>
+        <p>세션 A가 완료되면 출력을 세션 B로 전달합니다.</p>
+        <div class="fg"><label>From 세션 (완료 대기)</label><select id="chain-from"></select></div>
+        <div class="fg"><label>To 세션 (결과 전달)</label><select id="chain-to"></select></div>
+        <div class="fg">
+          <label>프롬프트 템플릿 <span class="hint">— {{output}} 자리에 캡처 내용 삽입</span></label>
+          <textarea id="chain-tpl" placeholder="{{output}}"></textarea>
+        </div>
+        <button class="btn primary" onclick="runChain()">실행</button>
+        <div class="orc-result" id="chain-result">—</div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- #content -->
+
+<!-- ── Modal: 새 세션 ── -->
+<div id="m-newsess" class="backdrop">
+  <div class="modal">
+    <div class="modal-hdr"><h3>새 세션 생성</h3></div>
+    <div class="modal-body">
+      <div class="fg"><label>세션 이름</label><input id="ns-name" type="text" placeholder="my-project" /></div>
+      <div class="fg"><label>작업 디렉터리</label><input id="ns-cwd" type="text" placeholder="/home/user/projects/my-project" /></div>
+      <div class="fg"><label>에이전트</label><input id="ns-agent" type="text" value="claude_code" /></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal('m-newsess')">취소</button>
+      <button class="btn primary" onclick="createSession()">생성</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal: 스케줄 ── -->
+<div id="m-sched" class="backdrop">
+  <div class="modal">
+    <div class="modal-hdr"><h3 id="sched-modal-title">새 스케줄</h3></div>
+    <div class="modal-body">
+      <div class="frow">
+        <div class="fg"><label>이름</label><input id="sm-name" type="text" /></div>
+        <div class="fg"><label>Cron Spec <span class="hint">(6-field: 초 분 시 일 월 요일)</span></label><input id="sm-cron" placeholder="0 0 9 * * *" /></div>
+      </div>
+      <div class="frow">
+        <div class="fg">
+          <label>액션</label>
+          <select id="sm-action" onchange="onSchedAction()">
+            <option value="send_prompt">send_prompt</option>
+            <option value="status_report">status_report</option>
+            <option value="batch_session">batch_session</option>
+          </select>
+        </div>
+        <div class="fg" style="justify-content:flex-end;padding-bottom:2px">
+          <div class="cb-row"><input type="checkbox" id="sm-enabled" checked /><label for="sm-enabled">활성화</label></div>
+        </div>
+      </div>
+      <div id="sm-target-wrap">
+        <div class="fg"><label>대상 세션</label><select id="sm-target"></select></div>
+        <div class="fg" id="sm-payload-wrap"><label>Payload (프롬프트)</label><textarea id="sm-payload"></textarea></div>
+      </div>
+      <div id="sm-batch-wrap" style="display:none;display:flex;flex-direction:column;gap:10px">
+        <div class="sec-label">세션 템플릿</div>
+        <div class="frow">
+          <div class="fg"><label>작업 디렉터리</label><input id="sm-tcwd" type="text" /></div>
+          <div class="fg"><label>에이전트</label><input id="sm-tagt" type="text" value="claude_code" /></div>
+        </div>
+        <div class="fg"><label>초기 프롬프트</label><textarea id="sm-init"></textarea></div>
+        <div class="fg"><label>마감 시간 (초, 0 = 무제한)</label><input id="sm-deadline" type="number" value="0" min="0" /></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal('m-sched')">취소</button>
+      <button class="btn primary" onclick="saveSched()">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal: 워크플로우 ── -->
+<div id="m-wf" class="backdrop">
+  <div class="modal wide">
+    <div class="modal-hdr"><h3 id="wf-modal-title">새 워크플로우</h3></div>
+    <div class="modal-body">
+      <div class="frow">
+        <div class="fg"><label>이름</label><input id="wm-name" type="text" /></div>
+        <div class="fg" style="justify-content:flex-end;padding-bottom:2px">
+          <div class="cb-row"><input type="checkbox" id="wm-enabled" checked /><label for="wm-enabled">활성화</label></div>
+        </div>
+      </div>
+      <div class="sec-label">노드</div>
+      <div class="dyn-list" id="wm-nodes"></div>
+      <button class="btn" style="align-self:flex-start" onclick="addNode()">＋ 노드 추가</button>
+      <div class="sec-label">엣지 (의존 관계)</div>
+      <div class="dyn-list" id="wm-edges"></div>
+      <button class="btn" style="align-self:flex-start" onclick="addEdge()">＋ 엣지 추가</button>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal('m-wf')">취소</button>
+      <button class="btn primary" onclick="saveWf()">저장</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── state ──────────────────────────────────────────────────────────────────
+let token = '';
+let sessions = [];
+let schedules = [];
+let workflows = [];
+let currentSess = null;
+let evtSource = null;
+let schedEditId = null;
+let wfEditId = null;
+
+// ── auth ───────────────────────────────────────────────────────────────────
+function login() {
+  const v = document.getElementById('token-input').value.trim();
+  if (!v) return;
+  token = v;
+  localStorage.setItem('remode_token', token);
+  document.getElementById('auth').style.display = 'none';
+  init();
+}
+
+function init() {
+  token = token || localStorage.getItem('remode_token') || '';
+  if (!token) return;
+  document.getElementById('auth').style.display = 'none';
+  loadSessions();
+  setInterval(loadSessions, 5000);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  if (localStorage.getItem('remode_token')) { token = localStorage.getItem('remode_token'); init(); }
+  document.getElementById('token-input').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+});
+
+// ── API ────────────────────────────────────────────────────────────────────
+async function api(method, path, body) {
+  const opts = { method, headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' } };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const res = await fetch(path, opts);
+  if (res.status === 401) { token = ''; localStorage.removeItem('remode_token'); location.reload(); }
+  return res;
+}
+
+// ── tabs ───────────────────────────────────────────────────────────────────
+function switchTab(btn) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  const tab = btn.dataset.tab;
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  if (tab === 'schedules')   loadSchedules();
+  if (tab === 'workflows')   loadWorkflows();
+  if (tab === 'orchestrate') renderOrcSelects();
+}
+
+// ── sessions ───────────────────────────────────────────────────────────────
+async function loadSessions() {
+  const res = await api('GET', '/api/sessions');
+  if (!res.ok) return;
+  sessions = await res.json() || [];
+  renderSidebar();
+}
+
+function renderSidebar() {
+  const el = document.getElementById('session-list');
+  el.innerHTML = '';
+  for (const s of sessions) {
+    const d = document.createElement('div');
+    d.className = 'session-item' + (currentSess?.name === s.name ? ' active' : '');
+    d.innerHTML = `<div class="session-name">${x(s.name)}</div><div class="session-meta">${x(s.agent_type)} · ${x(s.transport)} · ${x(s.level)}</div>`;
+    d.onclick = () => selectSession(s);
+    el.appendChild(d);
+  }
+}
+
+function selectSession(s) {
+  currentSess = s;
+  document.querySelectorAll('.session-item').forEach(el =>
+    el.classList.toggle('active', el.querySelector('.session-name')?.textContent === s.name));
+  renderSessMain(s);
+}
+
+function renderSessMain(s) {
+  const main = document.getElementById('sess-main');
+  main.innerHTML = `
+    <div id="toolbar">
+      <span class="sess-title">${x(s.name)}</span>
+      <button class="btn" onclick="sendKey('Enter')">↵ Enter</button>
+      <button class="btn" onclick="sendKey('Escape')">Esc</button>
+      <button class="btn" onclick="sendKey('C-c')">Ctrl+C</button>
+      <button class="btn" onclick="captureScreen()">📷 화면</button>
+      <select class="inline" id="level-sel" onchange="setLevel(this.value)">
+        <option value="all"${s.level==='all'?' selected':''}>all</option>
+        <option value="interactive"${s.level==='interactive'||!s.level?' selected':''}>interactive</option>
+        <option value="final"${s.level==='final'?' selected':''}>final</option>
+      </select>
+      <button class="btn danger" onclick="killSession('${x(s.name)}')">🗑 Kill</button>
+    </div>
+    <div id="output"></div>
+    <div id="input-row">
+      <input id="input-text" type="text" placeholder="메시지 입력 (Enter 전송)" autocomplete="off" />
+      <button class="btn send" onclick="sendInput()">전송</button>
+    </div>`;
+  document.getElementById('input-text').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendInput(); }
+  });
+  document.getElementById('input-text').focus();
+  if (evtSource) evtSource.close();
+  evtSource = new EventSource(`/api/sessions/${encodeURIComponent(s.name)}/stream?token=${encodeURIComponent(token)}`);
+  evtSource.onmessage = e => appendMsg(JSON.parse(e.data));
+  evtSource.onerror = () => {};
+}
+
+function appendMsg(wm) {
+  const out = document.getElementById('output');
+  if (!out) return;
+  const d = document.createElement('div');
+  d.className = 'msg-line ' + (wm.msg?.category || '');
+  d.innerHTML = (wm.prefix ? `<span class="msg-prefix">[${x(wm.prefix)}] </span>` : '') + x(wm.msg?.text || '');
+  out.appendChild(d);
+  out.scrollTop = out.scrollHeight;
+}
+
+async function sendInput() {
+  if (!currentSess) return;
+  const el = document.getElementById('input-text');
+  const text = el.value;
+  if (!text) return;
+  el.value = '';
+  await api('POST', `/api/sessions/${encodeURIComponent(currentSess.name)}/input`, { text });
+}
+
+async function sendKey(key) {
+  if (!currentSess) return;
+  await api('POST', `/api/sessions/${encodeURIComponent(currentSess.name)}/key`, { key });
+}
+
+async function setLevel(level) {
+  if (!currentSess) return;
+  await api('POST', `/api/sessions/${encodeURIComponent(currentSess.name)}/level`, { level });
+}
+
+async function captureScreen() {
+  if (!currentSess) return;
+  const res = await api('GET', `/api/sessions/${encodeURIComponent(currentSess.name)}`);
+  if (!res.ok) return;
+  const { screen } = await res.json();
+  const out = document.getElementById('output');
+  if (out && screen) {
+    const d = document.createElement('div');
+    d.className = 'msg-line';
+    d.style.cssText = 'background:#1c1c1c;padding:8px;margin:4px 0;border-radius:3px;';
+    d.textContent = screen;
+    out.appendChild(d);
+    out.scrollTop = out.scrollHeight;
+  }
+}
+
+async function killSession(name) {
+  if (!confirm(`세션 "${name}"을 종료하시겠습니까?`)) return;
+  await api('POST', `/api/sessions/${encodeURIComponent(name)}/kill`);
+  if (evtSource) evtSource.close();
+  currentSess = null;
+  document.getElementById('sess-main').innerHTML = '<div id="placeholder">세션을 선택하세요</div>';
+  await loadSessions();
+}
+
+async function createSession() {
+  const name = val('ns-name'), cwd = val('ns-cwd');
+  const agent_type = val('ns-agent') || 'claude_code';
+  if (!name || !cwd) { alert('이름과 디렉터리를 입력하세요.'); return; }
+  const res = await api('POST', '/api/sessions', { name, cwd, agent_type });
+  if (!res.ok) { alert('생성 실패: ' + await res.text()); return; }
+  closeModal('m-newsess');
+  ['ns-name','ns-cwd'].forEach(id => document.getElementById(id).value = '');
+  await loadSessions();
+  selectSession(await res.json());
+}
+
+// ── schedules ──────────────────────────────────────────────────────────────
+async function loadSchedules() {
+  const res = await api('GET', '/api/schedules');
+  if (!res.ok) return;
+  schedules = await res.json() || [];
+  renderSchedTable();
+}
+
+function renderSchedTable() {
+  const tb = document.getElementById('sched-tbody');
+  if (!schedules.length) { tb.innerHTML = '<tr class="empty"><td colspan="8">스케줄 없음</td></tr>'; return; }
+  tb.innerHTML = schedules.map((s, i) => `
+    <tr>
+      <td>${x(s.Name)}</td>
+      <td><code>${x(s.Action)}</code></td>
+      <td><code>${x(s.CronSpec)}</code></td>
+      <td>${x(s.TargetSession || (s.Template?.cwd ? s.Template.cwd : '—'))}</td>
+      <td>${ft(s.LastRun)}</td>
+      <td>${ft(s.NextRun)}</td>
+      <td><span class="badge ${s.Enabled?'on':'off'}">${s.Enabled?'활성':'비활성'}</span></td>
+      <td><div class="actions">
+        <button class="btn success" onclick="fireSched(${i})">▶ 실행</button>
+        <button class="btn" onclick="openSchedModal(${i})">편집</button>
+        <button class="btn danger" onclick="deleteSched(${i})">삭제</button>
+      </div></td>
+    </tr>`).join('');
+}
+
+function onSchedAction() {
+  const a = document.getElementById('sm-action').value;
+  document.getElementById('sm-target-wrap').style.display  = a !== 'batch_session' ? '' : 'none';
+  document.getElementById('sm-payload-wrap').style.display = a === 'send_prompt'    ? '' : 'none';
+  document.getElementById('sm-batch-wrap').style.display   = a === 'batch_session'  ? '' : 'none';
+}
+
+function openSchedModal(idx) {
+  schedEditId = null;
+  const s = idx !== null ? schedules[idx] : null;
+  document.getElementById('sched-modal-title').textContent = s ? '스케줄 편집' : '새 스케줄';
+  // populate session options
+  document.getElementById('sm-target').innerHTML = sessions.map(ss => `<option value="${x(ss.name)}">${x(ss.name)}</option>`).join('');
+  if (s) {
+    schedEditId = s.ID;
+    set('sm-name', s.Name || '');
+    set('sm-cron', s.CronSpec || '');
+    document.getElementById('sm-action').value = s.Action || 'send_prompt';
+    document.getElementById('sm-enabled').checked = !!s.Enabled;
+    document.getElementById('sm-target').value = s.TargetSession || '';
+    set('sm-payload', s.Payload || '');
+    set('sm-tcwd',    s.Template?.cwd || '');
+    set('sm-tagt',    s.Template?.agent_type || 'claude_code');
+    set('sm-init',    s.InitialPrompt || '');
+    set('sm-deadline', String(s.DeadlineSecs || 0));
+  } else {
+    ['sm-name','sm-cron','sm-payload','sm-tcwd','sm-init'].forEach(id => set(id, ''));
+    set('sm-tagt', 'claude_code'); set('sm-deadline', '0');
+    document.getElementById('sm-action').value = 'send_prompt';
+    document.getElementById('sm-enabled').checked = true;
+  }
+  onSchedAction();
+  openModal('m-sched');
+}
+
+async function saveSched() {
+  const action = document.getElementById('sm-action').value;
+  const sc = {
+    Name:          val('sm-name'),
+    CronSpec:      val('sm-cron'),
+    Action:        action,
+    Enabled:       document.getElementById('sm-enabled').checked,
+    TargetSession: action !== 'batch_session' ? val('sm-target') : '',
+    Payload:       action === 'send_prompt'   ? val('sm-payload') : '',
+    Template:      action === 'batch_session' ? { cwd: val('sm-tcwd'), agent_type: val('sm-tagt') || 'claude_code' } : {},
+    InitialPrompt: action === 'batch_session' ? val('sm-init') : '',
+    DeadlineSecs:  action === 'batch_session' ? (parseInt(val('sm-deadline')) || 0) : 0,
+  };
+  if (!sc.Name || !sc.CronSpec) { alert('이름과 Cron Spec을 입력하세요.'); return; }
+  const res = schedEditId
+    ? await api('PUT',  `/api/schedules/${schedEditId}`, { ...sc, ID: schedEditId })
+    : await api('POST', '/api/schedules', sc);
+  if (!res.ok) { alert('저장 실패: ' + await res.text()); return; }
+  closeModal('m-sched');
+  loadSchedules();
+}
+
+async function deleteSched(idx) {
+  if (!confirm('스케줄을 삭제하시겠습니까?')) return;
+  await api('DELETE', `/api/schedules/${schedules[idx].ID}`);
+  loadSchedules();
+}
+
+async function fireSched(idx) {
+  const res = await api('POST', `/api/schedules/${schedules[idx].ID}/fire`);
+  alert(res.ok ? '실행되었습니다.' : '실행 실패: ' + await res.text());
+}
+
+// ── workflows ──────────────────────────────────────────────────────────────
+async function loadWorkflows() {
+  const res = await api('GET', '/api/workflows');
+  if (!res.ok) return;
+  workflows = await res.json() || [];
+  renderWfTable();
+}
+
+function renderWfTable() {
+  const tb = document.getElementById('wf-tbody');
+  if (!workflows.length) { tb.innerHTML = '<tr class="empty"><td colspan="4">워크플로우 없음</td></tr>'; return; }
+  tb.innerHTML = workflows.map((w, i) => `
+    <tr>
+      <td>${x(w.Name)}</td>
+      <td>${(w.Nodes||[]).length}개</td>
+      <td><span class="badge ${w.Enabled?'on':'off'}">${w.Enabled?'활성':'비활성'}</span></td>
+      <td><div class="actions">
+        <button class="btn success" onclick="runWf(${i})">▶ 실행</button>
+        <button class="btn" onclick="showRuns(${i})">이력</button>
+        <button class="btn" onclick="openWfModal(${i})">편집</button>
+        <button class="btn danger" onclick="deleteWf(${i})">삭제</button>
+      </div></td>
+    </tr>`).join('');
+}
+
+let nodeSeq = 0, edgeSeq = 0;
+
+function addNode(data) {
+  const id = nodeSeq++;
+  const d = document.createElement('div');
+  d.className = 'dyn-item'; d.id = 'nd-' + id;
+  d.innerHTML = `<button class="rm" onclick="this.parentElement.remove()">✕</button>
+    <div class="frow">
+      <div class="fg"><label>Node Key</label><input class="nk" placeholder="step1" value="${x(data?.NodeKey||'')}" /></div>
+      <div class="fg"><label>기존 세션 이름 <span class="hint">(없으면 템플릿으로 생성)</span></label><input class="nsn" placeholder="(선택)" value="${x(data?.SessionName||'')}" /></div>
+    </div>
+    <div class="frow">
+      <div class="fg"><label>Template CWD</label><input class="tcwd" placeholder="/path/to/project" value="${x(data?.Template?.cwd||'')}" /></div>
+      <div class="fg"><label>Template Agent</label><input class="tagt" placeholder="claude_code" value="${x(data?.Template?.agent_type||'')}" /></div>
+    </div>
+    <div class="fg"><label>프롬프트</label><textarea class="npmt">${x(data?.Prompt||'')}</textarea></div>`;
+  document.getElementById('wm-nodes').appendChild(d);
+}
+
+function addEdge(data) {
+  const id = edgeSeq++;
+  const d = document.createElement('div');
+  d.className = 'dyn-item'; d.id = 'ed-' + id;
+  d.innerHTML = `<button class="rm" onclick="this.parentElement.remove()">✕</button>
+    <div class="frow">
+      <div class="fg"><label>From Node Key</label><input class="efrom" placeholder="step1" value="${x(data?.FromNode||'')}" /></div>
+      <div class="fg"><label>To Node Key</label><input class="eto" placeholder="step2" value="${x(data?.ToNode||'')}" /></div>
+    </div>`;
+  document.getElementById('wm-edges').appendChild(d);
+}
+
+function openWfModal(idx) {
+  wfEditId = null;
+  nodeSeq = 0; edgeSeq = 0;
+  const w = idx !== null ? workflows[idx] : null;
+  document.getElementById('wf-modal-title').textContent = w ? '워크플로우 편집' : '새 워크플로우';
+  document.getElementById('wm-nodes').innerHTML = '';
+  document.getElementById('wm-edges').innerHTML = '';
+  if (w) {
+    wfEditId = w.ID;
+    set('wm-name', w.Name || '');
+    document.getElementById('wm-enabled').checked = !!w.Enabled;
+    (w.Nodes||[]).forEach(n => addNode(n));
+    (w.Edges||[]).forEach(e => addEdge(e));
+  } else {
+    set('wm-name', '');
+    document.getElementById('wm-enabled').checked = true;
+    addNode();
+  }
+  openModal('m-wf');
+}
+
+async function saveWf() {
+  const nodes = [...document.querySelectorAll('#wm-nodes .dyn-item')].map(el => ({
+    NodeKey:     el.querySelector('.nk').value.trim(),
+    SessionName: el.querySelector('.nsn').value.trim(),
+    Template:    { cwd: el.querySelector('.tcwd').value.trim(), agent_type: el.querySelector('.tagt').value.trim() || 'claude_code' },
+    Prompt:      el.querySelector('.npmt').value,
+  }));
+  const edges = [...document.querySelectorAll('#wm-edges .dyn-item')].map(el => ({
+    FromNode: el.querySelector('.efrom').value.trim(),
+    ToNode:   el.querySelector('.eto').value.trim(),
+  }));
+  const wf = { Name: val('wm-name'), Enabled: document.getElementById('wm-enabled').checked, Nodes: nodes, Edges: edges };
+  if (!wf.Name) { alert('이름을 입력하세요.'); return; }
+  if (nodes.some(n => !n.NodeKey)) { alert('모든 노드에 NodeKey가 필요합니다.'); return; }
+  const res = wfEditId
+    ? await api('PUT',  `/api/workflows/${wfEditId}`, { ...wf, ID: wfEditId })
+    : await api('POST', '/api/workflows', wf);
+  if (!res.ok) { alert('저장 실패: ' + await res.text()); return; }
+  closeModal('m-wf');
+  loadWorkflows();
+}
+
+async function runWf(idx) {
+  const res = await api('POST', `/api/workflows/${workflows[idx].ID}/run`);
+  if (!res.ok) { alert('실행 실패: ' + await res.text()); return; }
+  const { run_id } = await res.json();
+  alert(`실행 시작\nRun ID: ${run_id}`);
+  loadWorkflows();
+}
+
+async function deleteWf(idx) {
+  if (!confirm('워크플로우를 삭제하시겠습니까?')) return;
+  await api('DELETE', `/api/workflows/${workflows[idx].ID}`);
+  loadWorkflows();
+}
+
+async function showRuns(idx) {
+  const w = workflows[idx];
+  const res = await api('GET', `/api/workflows/${w.ID}/runs`);
+  if (!res.ok) return;
+  const runs = await res.json() || [];
+  document.getElementById('runs-title').textContent = `실행 이력 — ${w.Name}`;
+  const tb = document.getElementById('runs-tbody');
+  tb.innerHTML = runs.length
+    ? runs.map(r => `<tr>
+        <td><code>${x(r.ID.slice(0,8))}…</code></td>
+        <td><span class="badge ${r.Status}">${r.Status}</span></td>
+        <td>${ft(r.StartedAt)}</td>
+        <td><button class="btn" onclick="showNodeRuns('${x(r.ID)}')">노드 상태</button></td>
+      </tr>`).join('')
+    : '<tr class="empty"><td colspan="4">실행 이력 없음</td></tr>';
+  const card = document.getElementById('card-runs');
+  card.style.display = '';
+  card.scrollIntoView({ behavior: 'smooth' });
+}
+
+async function showNodeRuns(runId) {
+  const res = await api('GET', `/api/runs/${runId}`);
+  if (!res.ok) return;
+  const { nodes } = await res.json();
+  document.getElementById('nodes-title').textContent = `노드 상태 — ${runId.slice(0,8)}…`;
+  document.getElementById('noderun-tbody').innerHTML = (nodes||[]).map(n => `
+    <tr>
+      <td>${x(n.NodeKey)}</td>
+      <td><span class="badge ${n.Status}">${n.Status}</span></td>
+      <td>${ft(n.UpdatedAt)}</td>
+    </tr>`).join('');
+  const card = document.getElementById('card-nodes');
+  card.style.display = '';
+  card.scrollIntoView({ behavior: 'smooth' });
+}
+
+// ── orchestrate ────────────────────────────────────────────────────────────
+function renderOrcSelects() {
+  const opts = sessions.map(s => `<option value="${x(s.name)}">${x(s.name)}</option>`).join('');
+  document.getElementById('bc-sess').innerHTML = sessions.length
+    ? sessions.map(s => `<label><input type="checkbox" value="${x(s.name)}" /> ${x(s.name)}</label>`).join('')
+    : '<span style="color:#555;font-size:12px">세션 없음</span>';
+  document.getElementById('chain-from').innerHTML = opts || '<option value="">세션 없음</option>';
+  document.getElementById('chain-to').innerHTML   = opts || '<option value="">세션 없음</option>';
+}
+
+async function runBroadcast() {
+  const names = [...document.querySelectorAll('#bc-sess input:checked')].map(el => el.value);
+  const prompt = val('bc-prompt');
+  if (!names.length || !prompt) { alert('세션과 프롬프트를 입력하세요.'); return; }
+  const res = await api('POST', '/api/broadcast', { names, prompt, collect_results: false });
+  const el = document.getElementById('bc-result');
+  if (!res.ok) { el.textContent = '오류: ' + await res.text(); return; }
+  const data = await res.json();
+  el.textContent = data.map(r => r.name + ': ' + (r.error || '✓')).join('\n');
+}
+
+async function runChain() {
+  const from_session = document.getElementById('chain-from').value;
+  const to_session   = document.getElementById('chain-to').value;
+  const prompt_template = val('chain-tpl');
+  if (!from_session || !to_session) { alert('세션을 선택하세요.'); return; }
+  const el = document.getElementById('chain-result');
+  el.textContent = '실행 중…';
+  const res = await api('POST', '/api/chain', { from_session, to_session, prompt_template });
+  el.textContent = res.ok ? '완료' : '오류: ' + await res.text();
+}
+
+// ── modals ─────────────────────────────────────────────────────────────────
+function openModal(id)  { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+document.addEventListener('click', e => { if (e.target.classList.contains('backdrop')) closeModal(e.target.id); });
+
+// ── utils ──────────────────────────────────────────────────────────────────
+const x = s => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const val = id => document.getElementById(id).value.trim();
+const set = (id, v) => { document.getElementById(id).value = v; };
+function ft(t) {
+  if (!t || t === '0001-01-01T00:00:00Z') return '—';
+  return new Date(t).toLocaleString('ko-KR', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+}
+</script>
+</body>
+</html>

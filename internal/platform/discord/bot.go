@@ -12,11 +12,11 @@ import (
 
 // RunConfig holds all parameters needed to start the Discord bot.
 type RunConfig struct {
-	Token          string
-	GuildID        string  // empty = global commands (up to 1h propagation); set for dev guild
-	AllowedUserIDs []int64
+	Token            string
+	GuildID          string  // empty = global commands (up to 1h propagation); set for dev guild
+	AllowedUserIDs   []int64
 	NotifyChannelIDs []int64
-	NewProjectDir  string
+	NewProjectDir    string
 }
 
 var slashCommands = []*discordgo.ApplicationCommand{
@@ -46,35 +46,51 @@ var slashCommands = []*discordgo.ApplicationCommand{
 	{Name: "help", Description: "도움말"},
 }
 
-// Run starts the Discord bot. It creates the platform, calls sm.Startup, then
-// runs until ctx is cancelled or /shutdown is received.
-func Run(ctx context.Context, cfg RunConfig, sm *session.Manager, setPlatform func(core.ChatPlatform)) error {
+// BotInstance holds a constructed Discord bot instance ready to Run.
+// Construct with NewBot, register ChatPlatform() with the session manager,
+// then call Run after sm.Startup.
+type BotInstance struct {
+	platform *Platform
+	dg       *discordgo.Session
+	cfg      RunConfig
+}
+
+// NewBot creates the Discord session and platform.
+// Returns an instance whose ChatPlatform() can be registered with the Manager.
+func NewBot(cfg RunConfig) (*BotInstance, error) {
 	dg, err := discordgo.New("Bot " + cfg.Token)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	dg.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsDirectMessages
+	return &BotInstance{
+		platform: NewPlatform(dg),
+		dg:       dg,
+		cfg:      cfg,
+	}, nil
+}
 
-	platform := NewPlatform(dg)
-	if setPlatform != nil {
-		setPlatform(platform)
-	}
+// ChatPlatform returns the core.ChatPlatform for registration with the Manager.
+func (b *BotInstance) ChatPlatform() core.ChatPlatform { return b.platform }
 
-	allowedIDs := make(map[int64]bool, len(cfg.AllowedUserIDs))
-	for _, id := range cfg.AllowedUserIDs {
+// Run starts the Discord interaction/message handlers and blocks until ctx
+// is cancelled or /shutdown is received. Must be called after sm.Startup.
+func (b *BotInstance) Run(ctx context.Context, sm *session.Manager) error {
+	allowedIDs := make(map[int64]bool, len(b.cfg.AllowedUserIDs))
+	for _, id := range b.cfg.AllowedUserIDs {
 		allowedIDs[id] = true
 	}
 
 	stopCh := make(chan struct{})
 	bd := &BotData{
 		SM:            sm,
-		Session:       dg,
+		Session:       b.dg,
 		AllowedIDs:    allowedIDs,
-		NewProjectDir: cfg.NewProjectDir,
+		NewProjectDir: b.cfg.NewProjectDir,
 		StopCh:        stopCh,
 	}
 
-	dg.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	b.dg.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		uid := userID(i)
 		if !allowed(uid, allowedIDs) {
 			return
@@ -87,26 +103,22 @@ func Run(ctx context.Context, cfg RunConfig, sm *session.Manager, setPlatform fu
 		}
 	})
 
-	dg.AddHandler(func(s *discordgo.Session, m *discordgo.MessageCreate) {
+	b.dg.AddHandler(func(s *discordgo.Session, m *discordgo.MessageCreate) {
 		handleTextMessage(ctx, s, m, bd)
 	})
 
-	if err := dg.Open(); err != nil {
+	if err := b.dg.Open(); err != nil {
 		return err
 	}
-	defer dg.Close()
+	defer b.dg.Close()
 
 	// Register slash commands (single atomic API call)
-	registerCommands(dg, cfg.GuildID)
+	registerCommands(b.dg, b.cfg.GuildID)
 
-	if err := sm.Startup(ctx); err != nil {
-		log.Printf("startup error: %v", err)
-	}
+	// Notify known discord sessions that the bot restarted.
+	go notifyDCStartup(ctx, b.platform, sm, b.cfg.NotifyChannelIDs)
 
-	// Notify known sessions that the bot restarted
-	go notifyDCStartup(ctx, platform, sm, cfg.NotifyChannelIDs)
-
-	log.Printf("Discord bot ready (guild=%q)", cfg.GuildID)
+	log.Printf("Discord bot ready (guild=%q)", b.cfg.GuildID)
 
 	select {
 	case <-ctx.Done():
@@ -161,13 +173,17 @@ func registerCommands(s *discordgo.Session, guildID string) {
 	log.Printf("discord: registered %d commands", len(slashCommands))
 }
 
-
+// notifyDCStartup sends a restart notice to discord-transport sessions and any
+// configured notification channels.
 func notifyDCStartup(ctx context.Context, platform core.ChatPlatform, sm *session.Manager, notifyChannelIDs []int64) {
 	msg := core.Message{Text: "🚀 remode 봇이 시작됐습니다."}
 	seen := make(map[int64]bool)
 
-	// Notify all known session channels
+	// Notify all known discord session channels
 	for _, sess := range sm.ListAll() {
+		if sess.Transport != "discord" {
+			continue
+		}
 		if !seen[sess.ChatID] {
 			seen[sess.ChatID] = true
 			platform.Send(ctx, sess.ChatID, msg, "") //nolint:errcheck
@@ -182,4 +198,3 @@ func notifyDCStartup(ctx context.Context, platform core.ChatPlatform, sm *sessio
 		}
 	}
 }
-

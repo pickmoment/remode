@@ -4,6 +4,7 @@ package sqlite
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -22,7 +23,64 @@ CREATE TABLE IF NOT EXISTS sessions (
 	created_at        TEXT NOT NULL,
 	jsonl_offset      INTEGER NOT NULL DEFAULT 0,
 	message_level     TEXT NOT NULL DEFAULT 'all',
-	agent_type        TEXT NOT NULL DEFAULT 'claude_code'
+	agent_type        TEXT NOT NULL DEFAULT 'claude_code',
+	transport         TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS schedules (
+	id                   TEXT PRIMARY KEY,
+	name                 TEXT NOT NULL,
+	cron_spec            TEXT NOT NULL,
+	action_type          TEXT NOT NULL,
+	target_session_name  TEXT NOT NULL DEFAULT '',
+	session_template     TEXT NOT NULL DEFAULT '{}',
+	payload              TEXT NOT NULL DEFAULT '',
+	initial_prompt       TEXT NOT NULL DEFAULT '',
+	deadline_secs        INTEGER NOT NULL DEFAULT 0,
+	enabled              INTEGER NOT NULL DEFAULT 1,
+	last_run             TEXT NOT NULL DEFAULT '',
+	next_run             TEXT NOT NULL DEFAULT '',
+	created_at           TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS workflows (
+	id         TEXT PRIMARY KEY,
+	name       TEXT NOT NULL,
+	enabled    INTEGER NOT NULL DEFAULT 1,
+	created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS workflow_nodes (
+	id               TEXT PRIMARY KEY,
+	workflow_id      TEXT NOT NULL,
+	node_key         TEXT NOT NULL,
+	session_name     TEXT NOT NULL DEFAULT '',
+	session_template TEXT NOT NULL DEFAULT '{}',
+	prompt           TEXT NOT NULL DEFAULT '',
+	UNIQUE(workflow_id, node_key)
+);
+
+CREATE TABLE IF NOT EXISTS workflow_edges (
+	workflow_id TEXT NOT NULL,
+	from_node   TEXT NOT NULL,
+	to_node     TEXT NOT NULL,
+	PRIMARY KEY (workflow_id, from_node, to_node)
+);
+
+CREATE TABLE IF NOT EXISTS workflow_runs (
+	id          TEXT PRIMARY KEY,
+	workflow_id TEXT NOT NULL,
+	status      TEXT NOT NULL,
+	started_at  TEXT NOT NULL,
+	updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS workflow_node_runs (
+	run_id     TEXT NOT NULL,
+	node_key   TEXT NOT NULL,
+	status     TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (run_id, node_key)
 );
 `
 
@@ -40,7 +98,43 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("create schema: %w", err)
 	}
+	// Idempotent migration: add transport column to pre-existing databases.
+	// CREATE TABLE IF NOT EXISTS does not add new columns to existing tables.
+	if err := addColumnIfMissing(db, "sessions", "transport", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return nil, fmt.Errorf("migrate transport column: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+// addColumnIfMissing adds a column to a table only if it doesn't already exist.
+func addColumnIfMissing(db *sql.DB, table, column, definition string) error {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull int
+		var dflt sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil // already exists
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition))
+	// Tolerate "duplicate column" in case of a race (shouldn't happen with single writer).
+	if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return err
+	}
+	return nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -48,8 +142,8 @@ func (s *Store) Close() error { return s.db.Close() }
 func (s *Store) Save(sess *core.Session) error {
 	_, err := s.db.Exec(`
 		INSERT INTO sessions (name, tmux_name, session_id, cwd, jsonl_path, chat_id,
-		                      created_at, jsonl_offset, message_level, agent_type)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                      created_at, jsonl_offset, message_level, agent_type, transport)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(name) DO UPDATE SET
 		  tmux_name=excluded.tmux_name,
 		  session_id=excluded.session_id,
@@ -59,10 +153,11 @@ func (s *Store) Save(sess *core.Session) error {
 		  created_at=excluded.created_at,
 		  jsonl_offset=excluded.jsonl_offset,
 		  message_level=excluded.message_level,
-		  agent_type=excluded.agent_type`,
+		  agent_type=excluded.agent_type,
+		  transport=excluded.transport`,
 		sess.Name, sess.TmuxName, sess.SessionID, sess.CWD, sess.JSONLPath,
 		sess.ChatID, sess.CreatedAt.Format(time.RFC3339), sess.JSONLOffset,
-		string(sess.Level), sess.AgentType,
+		string(sess.Level), sess.AgentType, sess.Transport,
 	)
 	return err
 }
@@ -87,9 +182,16 @@ func (s *Store) UpdateChatID(name string, chatID int64) error {
 	return err
 }
 
+// BackfillTransport sets transport to defaultTransport for all rows with an empty transport.
+// Idempotent — only touches rows created before transport tracking was added.
+func (s *Store) BackfillTransport(defaultTransport string) error {
+	_, err := s.db.Exec(`UPDATE sessions SET transport = ? WHERE transport = ''`, defaultTransport)
+	return err
+}
+
 func (s *Store) List() ([]*core.Session, error) {
 	rows, err := s.db.Query(`SELECT name, tmux_name, session_id, cwd, jsonl_path, chat_id,
-	                                created_at, jsonl_offset, message_level, agent_type
+	                                created_at, jsonl_offset, message_level, agent_type, transport
 	                         FROM sessions`)
 	if err != nil {
 		return nil, err
@@ -108,7 +210,7 @@ func (s *Store) List() ([]*core.Session, error) {
 
 func (s *Store) Get(name string) (*core.Session, error) {
 	row := s.db.QueryRow(`SELECT name, tmux_name, session_id, cwd, jsonl_path, chat_id,
-	                             created_at, jsonl_offset, message_level, agent_type
+	                             created_at, jsonl_offset, message_level, agent_type, transport
 	                      FROM sessions WHERE name = ?`, name)
 	sess, err := scanSession(row)
 	if err == sql.ErrNoRows {
@@ -126,7 +228,7 @@ func scanSession(row scanner) (*core.Session, error) {
 	var createdAt, level string
 	err := row.Scan(
 		&sess.Name, &sess.TmuxName, &sess.SessionID, &sess.CWD, &sess.JSONLPath,
-		&sess.ChatID, &createdAt, &sess.JSONLOffset, &level, &sess.AgentType,
+		&sess.ChatID, &createdAt, &sess.JSONLOffset, &level, &sess.AgentType, &sess.Transport,
 	)
 	if err != nil {
 		return nil, err

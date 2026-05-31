@@ -88,6 +88,18 @@ func (s *Store) Get(name string) (*core.Session, error) {
 	return &cp, nil
 }
 
+// BackfillTransport sets transport to defaultTransport for all entries with an empty transport.
+func (s *Store) BackfillTransport(defaultTransport string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, sess := range s.sessions {
+		if sess.Transport == "" {
+			sess.Transport = defaultTransport
+		}
+	}
+	return nil
+}
+
 // Compile-time check: Store satisfies core.SessionUpdater.
 var _ interface {
 	UpdateOffset(string, int64) error

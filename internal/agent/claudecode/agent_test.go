@@ -188,6 +188,9 @@ func TestExtractApprovalText_SeparatorBeforeQuestion(t *testing.T) {
 }
 
 func TestParseEntry_AskUserQuestion(t *testing.T) {
+	// AskUserQuestion is detected via tmux screen capture, not JSONL.
+	// parseEntry silently drops this tool_use so the screen-capture path
+	// handles it without double-firing.
 	entry := map[string]any{
 		"type": "assistant",
 		"message": map[string]any{
@@ -212,10 +215,7 @@ func TestParseEntry_AskUserQuestion(t *testing.T) {
 		},
 	}
 	events := parseEntry(entry)
-	require.Len(t, events, 1)
-	assert.Equal(t, core.EventAskUserQuestion, events[0].Type)
-	assert.Equal(t, "Which option?", events[0].AskQuestion)
-	assert.Equal(t, []string{"Option A", "Option B"}, events[0].AskOptions)
+	assert.Empty(t, events)
 }
 
 func TestCountOptions(t *testing.T) {

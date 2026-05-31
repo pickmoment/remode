@@ -172,7 +172,7 @@ func handleNew(ctx context.Context, s *discordgo.Session, i *discordgo.Interacti
 		editResponse(s, i, fmt.Sprintf("❌ 디렉터리 생성 실패: %v", err))
 		return
 	}
-	if _, err := sm.Create(ctx, name, cwd, channelID(i), ""); err != nil {
+	if _, err := sm.Create(ctx, name, cwd, channelID(i), "", "discord"); err != nil {
 		log.Printf("세션 생성 실패: %v", err)
 		editResponse(s, i, fmt.Sprintf("❌ 실패: %v", err))
 	} else {
@@ -486,7 +486,7 @@ func handleButtonInteraction(ctx context.Context, s *discordgo.Session, i *disco
 			Type: discordgo.InteractionResponseDeferredMessageUpdate,
 		})
 		mkdirAll(pending.cwd) //nolint:errcheck
-		if _, err := sm.Create(ctx, pending.name, pending.cwd, chID, value); err != nil {
+		if _, err := sm.Create(ctx, pending.name, pending.cwd, chID, value, "discord"); err != nil {
 			log.Printf("세션 생성 실패: %v", err)
 			editNoComp(fmt.Sprintf("❌ 실패: %v", err))
 		} else {
@@ -568,7 +568,7 @@ func handleButtonInteraction(ctx context.Context, s *discordgo.Session, i *disco
 		for idx := 2; sm.Get(name) != nil; idx++ {
 			name = fmt.Sprintf("%s-%d", base, idx)
 		}
-		if _, err := sm.Resume(ctx, name, bd.projSelected.project.CWD, chID, ps.SessionID, bd.projSelected.agentType); err != nil {
+		if _, err := sm.Resume(ctx, name, bd.projSelected.project.CWD, chID, ps.SessionID, bd.projSelected.agentType, "discord"); err != nil {
 			log.Printf("세션 재개 실패: %v", err)
 			editNoComp(fmt.Sprintf("❌ 실패: %v", err))
 		} else {
@@ -610,7 +610,7 @@ func handleButtonInteraction(ctx context.Context, s *discordgo.Session, i *disco
 			Type: discordgo.InteractionResponseDeferredMessageUpdate,
 		})
 		sm.Kill(ctx, name)  //nolint:errcheck
-		if _, err := sm.Resume(ctx, name, cwd, fromChatID, value, agentType); err != nil {
+		if _, err := sm.Resume(ctx, name, cwd, fromChatID, value, agentType, "discord"); err != nil {
 			log.Printf("세션 전환 실패: %v", err)
 			editNoComp(fmt.Sprintf("❌ 실패: %v", err))
 		} else {

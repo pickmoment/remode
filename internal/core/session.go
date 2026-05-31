@@ -23,5 +23,6 @@ type Session struct {
 	JSONLOffset  int64
 	Level        MessageLevel
 	AgentType    string
+	Transport    string    // "telegram" | "discord" | "web"
 	LastOutbound []Message // ephemeral: last batch sent to the user
 }

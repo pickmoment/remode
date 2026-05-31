@@ -135,7 +135,7 @@ func cmdNew(ctx context.Context, upd tgbotapi.Update, bd *BotData, args []string
 	}
 
 	replyHTML(bd.Bot, chatID, fmt.Sprintf("⏳ 세션 <b>%s</b> 시작 중…", html.EscapeString(name)))
-	_, err := bd.SM.Create(ctx, name, cwd, chatID, "")
+	_, err := bd.SM.Create(ctx, name, cwd, chatID, "", "telegram")
 	if err != nil {
 		log.Printf("세션 생성 실패: %v", err)
 		replyHTML(bd.Bot, chatID, fmt.Sprintf("❌ 실패: %v", err))
@@ -550,7 +550,7 @@ func handleCallback(ctx context.Context, upd tgbotapi.Update, bd *BotData) {
 			return
 		}
 		editText(fmt.Sprintf("⏳ 세션 <b>%s</b> 시작 중…", html.EscapeString(pending.name)))
-		if _, err := sm.Create(ctx, pending.name, pending.cwd, query.From.ID, value); err != nil {
+		if _, err := sm.Create(ctx, pending.name, pending.cwd, query.From.ID, value, "telegram"); err != nil {
 			log.Printf("세션 생성 실패: %v", err)
 			editText(fmt.Sprintf("❌ 실패: %v", err))
 		} else {
@@ -620,7 +620,7 @@ func handleCallback(ctx context.Context, upd tgbotapi.Update, bd *BotData) {
 			name = fmt.Sprintf("%s-%d", base, i)
 		}
 		editText(fmt.Sprintf("⏳ <b>%s</b> 재개 중…", html.EscapeString(name)))
-		if _, err := sm.Resume(ctx, name, selected.project.CWD, query.From.ID, sessInfo.SessionID, selected.agentType); err != nil {
+		if _, err := sm.Resume(ctx, name, selected.project.CWD, query.From.ID, sessInfo.SessionID, selected.agentType, "telegram"); err != nil {
 			log.Printf("세션 재개 실패: %v", err)
 			editText(fmt.Sprintf("❌ 실패: %v", err))
 		} else {
@@ -654,7 +654,7 @@ func handleCallback(ctx context.Context, upd tgbotapi.Update, bd *BotData) {
 		name, cwd, fromChatID, agentType := sess.Name, sess.CWD, sess.ChatID, sess.AgentType
 		editText("⏳ 세션 전환 중…")
 		sm.Kill(ctx, name)  //nolint:errcheck
-		if _, err := sm.Resume(ctx, name, cwd, fromChatID, value, agentType); err != nil {
+		if _, err := sm.Resume(ctx, name, cwd, fromChatID, value, agentType, "telegram"); err != nil {
 			log.Printf("세션 전환 실패: %v", err)
 			editText(fmt.Sprintf("❌ 실패: %v", err))
 		} else {
