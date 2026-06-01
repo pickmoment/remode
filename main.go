@@ -76,8 +76,9 @@ func main() {
 	for _, aType := range cfg.Agents.Enabled {
 		switch aType {
 		case "claude_code":
-			agents["claude_code"] = claudecode.NewWithPoll(
-				time.Duration(cfg.Monitor.PlanBannerPollMS) * time.Millisecond,
+			agents["claude_code"] = claudecode.NewWithPollAndGrace(
+				time.Duration(cfg.Monitor.PlanBannerPollMS)*time.Millisecond,
+				time.Duration(cfg.Monitor.DialogGraceMS)*time.Millisecond,
 			)
 		case "codex":
 			agents["codex"] = codex.New()

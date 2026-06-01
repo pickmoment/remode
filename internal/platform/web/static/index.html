@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>remode</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked@14/marked.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Menlo','Consolas',monospace; background: #f5f5f5; color: #1a1a1a; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -36,13 +37,50 @@
     #sess-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
     #toolbar { background: #fff; border-bottom: 1px solid #ddd; padding: 8px 14px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
     #toolbar .sess-title { font-size: 13px; color: #1a6fa8; font-weight: bold; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    #output { flex: 1; overflow-y: auto; padding: 12px 16px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; background: #fafafa; }
-    .msg-line { margin-bottom: 3px; }
-    .msg-line.tool { color: #aaa; }
-    .msg-line.interactive { color: #a06a00; }
-    .msg-prefix { color: #bbb; font-size: 11px; }
-    #input-row { display: flex; border-top: 1px solid #ddd; background: #fff; }
-    #input-text { flex: 1; background: #fff; border: none; outline: none; color: #1a1a1a; font-family: inherit; font-size: 13px; padding: 10px 14px; }
+    #output { flex: 1; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 2px; background: #eef2f7; }
+    .chat-row { display: flex; flex-direction: column; max-width: 78%; }
+    .chat-row.new-group { margin-top: 10px; }
+    .chat-row.user  { align-self: flex-end;   align-items: flex-end; }
+    .chat-row.agent { align-self: flex-start; align-items: flex-start; }
+    .chat-row.tool  { align-self: flex-start; max-width: 100%; }
+    .chat-row.interactive { align-self: flex-start; max-width: 82%; }
+    .chat-sender { font-size: 11px; color: #999; padding: 0 6px; margin-bottom: 2px; }
+    .chat-row.user .chat-sender { color: #1a6fa8; }
+    .chat-row.agent .chat-sender { color: #2a7a2a; }
+    .bubble { padding: 8px 12px; border-radius: 16px; line-height: 1.6; word-break: break-word; font-size: 13px; }
+    .chat-row.user .bubble { background: #1a6fa8; color: #fff; border-bottom-right-radius: 4px; }
+    .chat-row.agent .bubble { background: #fff; color: #1a1a1a; border: 1px solid #e0e0e0; border-bottom-left-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+    .chat-row.tool .bubble { background: none; color: #bbb; font-size: 11px; padding: 1px 4px; font-style: italic; }
+    .chat-row.interactive .bubble { background: #fffbf0; color: #8a6000; border: 1px solid #f5d47a; border-left: 3px solid #f5a623; border-bottom-left-radius: 4px; }
+    .bubble.pre { font-family: 'Menlo','Consolas',monospace; font-size: 12px; background: #1e1e1e; color: #d4d4d4; border-radius: 6px; padding: 10px 14px; overflow-x: auto; white-space: pre; border: none; box-shadow: none; }
+    /* ── markdown elements inside bubbles ── */
+    .bubble p { margin: 0 0 6px; }
+    .bubble p:last-child { margin-bottom: 0; }
+    .bubble h1,.bubble h2,.bubble h3,.bubble h4 { font-weight: bold; margin: 8px 0 3px; line-height: 1.3; }
+    .bubble h1 { font-size: 1.15em; } .bubble h2 { font-size: 1.08em; } .bubble h3 { font-size: 1em; }
+    .bubble ul,.bubble ol { padding-left: 20px; margin: 2px 0 6px; }
+    .bubble li { margin: 2px 0; }
+    .bubble li p { margin: 0; }
+    .bubble blockquote { border-left: 3px solid rgba(0,0,0,.2); padding-left: 10px; margin: 4px 0; opacity: .8; }
+    .bubble code { background: rgba(0,0,0,.08); padding: 1px 5px; border-radius: 3px; font-family: 'Menlo','Consolas',monospace; font-size: .88em; }
+    .chat-row.user .bubble code { background: rgba(255,255,255,.2); }
+    .chat-row.interactive .bubble code { background: rgba(0,0,0,.06); }
+    .bubble pre { background: #1e1e1e; color: #d4d4d4; border-radius: 6px; padding: 10px 14px; overflow-x: auto; margin: 6px 0; font-family: 'Menlo','Consolas',monospace; }
+    .bubble pre code { background: none; padding: 0; color: inherit; font-size: .9em; }
+    .chat-row.user .bubble pre { background: rgba(0,0,0,.25); }
+    .bubble table { border-collapse: collapse; margin: 4px 0; font-size: .9em; max-width: 100%; }
+    .bubble th,.bubble td { border: 1px solid rgba(0,0,0,.15); padding: 4px 8px; text-align: left; }
+    .bubble th { background: rgba(0,0,0,.05); font-weight: bold; }
+    .bubble hr { border: none; border-top: 1px solid rgba(0,0,0,.12); margin: 6px 0; }
+    .bubble a { color: inherit; text-decoration: underline; opacity: .85; }
+    .bubble strong { font-weight: 600; }
+    .bubble em { font-style: italic; }
+    .bubble-btns { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+    .bubble-btn { padding: 4px 12px; background: #f0f0f0; border: 1px solid #ddd; border-radius: 3px; font-size: 12px; font-family: inherit; cursor: pointer; color: #444; }
+    .bubble-btn:hover { background: #e4e4e4; }
+    #input-row { display: flex; border-top: 1px solid #ddd; background: #fff; padding: 10px 12px; gap: 8px; align-items: flex-end; }
+    #input-text { flex: 1; background: #f0f2f5; border: 1px solid #e0e0e0; border-radius: 12px; outline: none; color: #1a1a1a; font-family: inherit; font-size: 13px; padding: 9px 16px; resize: none; overflow-y: auto; min-height: 38px; max-height: 160px; line-height: 1.5; }
+    #input-text:focus { border-color: #1a6fa8; }
     #placeholder { flex: 1; display: flex; align-items: center; justify-content: center; color: #ccc; font-size: 14px; }
 
     /* ── table tabs ── */
@@ -77,7 +115,7 @@
     .btn.success:hover { background: #236823; }
     .btn.danger { border-color: #d0a0a0; color: #a03030; }
     .btn.danger:hover { background: #fdf0f0; border-color: #c07070; }
-    .btn.send { padding: 10px 16px; background: #1a6fa8; border: none; color: #fff; font-size: 13px; }
+    .btn.send { padding: 8px 18px; background: #1a6fa8; border: none; color: #fff; font-size: 13px; border-radius: 20px; }
     .btn.send:hover { background: #1560a0; }
     select.inline { padding: 3px 6px; font-size: 12px; font-family: inherit; background: #fff; border: 1px solid #d0d0d0; color: #444; border-radius: 3px; cursor: pointer; }
 
@@ -325,6 +363,21 @@
 </div>
 
 <script>
+// ── markdown ───────────────────────────────────────────────────────────────
+if (typeof marked !== 'undefined') {
+  marked.use({
+    gfm: true,
+    breaks: true,
+    renderer: { html: () => '' }, // strip raw HTML for safety
+  });
+}
+function renderMd(text) {
+  if (!text) return '';
+  if (typeof marked === 'undefined') return x(text).replace(/\n/g, '<br>');
+  try { return marked.parse(String(text)); }
+  catch(e) { return x(text).replace(/\n/g, '<br>'); }
+}
+
 // ── state ──────────────────────────────────────────────────────────────────
 let token = '';
 let sessions = [];
@@ -334,6 +387,7 @@ let currentSess = null;
 let evtSource = null;
 let schedEditId = null;
 let wfEditId = null;
+let lastChatSender = null; // 'user' | 'agent' | 'tool' | 'interactive'
 
 // ── auth ───────────────────────────────────────────────────────────────────
 function login() {
@@ -407,30 +461,33 @@ function selectSession(s) {
 }
 
 function renderSessMain(s) {
+  lastChatSender = null;
   const main = document.getElementById('sess-main');
   main.innerHTML = `
     <div id="toolbar">
       <span class="sess-title">${x(s.name)}</span>
-      <button class="btn" onclick="sendKey('Enter')">↵ Enter</button>
-      <button class="btn" onclick="sendKey('Escape')">Esc</button>
-      <button class="btn" onclick="sendKey('C-c')">Ctrl+C</button>
-      <button class="btn" onclick="captureScreen()">📷 화면</button>
+      <button class="btn" onclick="sendKey('Enter')" title="Enter 전송">↵</button>
+      <button class="btn" onclick="sendKey('Escape')" title="Escape">Esc</button>
+      <button class="btn" onclick="sendKey('C-c')" title="Ctrl+C">Ctrl+C</button>
+      <button class="btn" onclick="captureScreen()" title="화면 캡처">📷</button>
       <select class="inline" id="level-sel" onchange="setLevel(this.value)">
         <option value="all"${s.level==='all'?' selected':''}>all</option>
         <option value="interactive"${s.level==='interactive'||!s.level?' selected':''}>interactive</option>
         <option value="final"${s.level==='final'?' selected':''}>final</option>
       </select>
-      <button class="btn danger" onclick="killSession('${x(s.name)}')">🗑 Kill</button>
+      <button class="btn danger" onclick="killSession('${x(s.name)}')" title="세션 종료">🗑</button>
     </div>
     <div id="output"></div>
     <div id="input-row">
-      <input id="input-text" type="text" placeholder="메시지 입력 (Enter 전송)" autocomplete="off" />
+      <textarea id="input-text" placeholder="메시지 입력… (Shift+Enter: 줄바꿈)" autocomplete="off" rows="1"></textarea>
       <button class="btn send" onclick="sendInput()">전송</button>
     </div>`;
-  document.getElementById('input-text').addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendInput(); }
+  const inputEl = document.getElementById('input-text');
+  inputEl.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendInput(); }
   });
-  document.getElementById('input-text').focus();
+  inputEl.addEventListener('input', () => autoResizeTextarea(inputEl));
+  inputEl.focus();
   if (evtSource) evtSource.close();
   evtSource = new EventSource(`/api/sessions/${encodeURIComponent(s.name)}/stream?token=${encodeURIComponent(token)}`);
   evtSource.onmessage = e => appendMsg(JSON.parse(e.data));
@@ -440,19 +497,81 @@ function renderSessMain(s) {
 function appendMsg(wm) {
   const out = document.getElementById('output');
   if (!out) return;
-  const d = document.createElement('div');
-  d.className = 'msg-line ' + (wm.msg?.category || '');
-  d.innerHTML = (wm.prefix ? `<span class="msg-prefix">[${x(wm.prefix)}] </span>` : '') + x(wm.msg?.text || '');
-  out.appendChild(d);
+  const category = wm.msg?.Category || '';
+  const text = wm.msg?.Text || '';
+  const isPre = !!wm.msg?.Preformatted;
+  const actions = wm.msg?.Actions || [];
+
+  let role = 'agent';
+  if (category === 'tool') role = 'tool';
+  else if (category === 'interactive') role = 'interactive';
+
+  const isNewGroup = role !== lastChatSender;
+  lastChatSender = role;
+
+  const row = document.createElement('div');
+  row.className = `chat-row ${role}${isNewGroup ? ' new-group' : ''}`;
+
+  let inner = '';
+  if (isNewGroup && role !== 'tool') {
+    const label = role === 'interactive' ? '⚠ 확인 필요' : (wm.prefix || '에이전트');
+    inner += `<div class="chat-sender">${x(label)}</div>`;
+  }
+
+  const content = isPre ? x(text) : renderMd(text);
+  inner += `<div class="bubble${isPre ? ' pre' : ''}">${content}`;
+  if (actions.length > 0) {
+    inner += '<div class="bubble-btns">';
+    for (const btnRow of actions) {
+      for (const a of btnRow) {
+        inner += `<button class="bubble-btn" onclick='triggerAction(${JSON.stringify(a.ActionID)})'>${x(a.Label)}</button>`;
+      }
+    }
+    inner += '</div>';
+  }
+  inner += '</div>';
+
+  row.innerHTML = inner;
+  out.appendChild(row);
   out.scrollTop = out.scrollHeight;
+}
+
+function appendUserBubble(text) {
+  const out = document.getElementById('output');
+  if (!out) return;
+  const isNewGroup = lastChatSender !== 'user';
+  lastChatSender = 'user';
+  const row = document.createElement('div');
+  row.className = `chat-row user${isNewGroup ? ' new-group' : ''}`;
+  let inner = isNewGroup ? '<div class="chat-sender">나</div>' : '';
+  inner += `<div class="bubble" style="white-space:pre-wrap">${x(text)}</div>`;
+  row.innerHTML = inner;
+  out.appendChild(row);
+  out.scrollTop = out.scrollHeight;
+}
+
+async function triggerAction(actionID) {
+  if (!currentSess) return;
+  const [type, val] = actionID.split(':');
+  if (type === 'key') {
+    await sendKey(val);
+  } else if (type === 'arrowkey') {
+    const n = parseInt(val, 10);
+    // Up×20 to reset cursor, then Down×N to select option N, then Enter
+    for (let i = 0; i < 20; i++) await api('POST', `/api/sessions/${encodeURIComponent(currentSess.name)}/key`, { key: 'Up' });
+    for (let i = 0; i < n; i++) await api('POST', `/api/sessions/${encodeURIComponent(currentSess.name)}/key`, { key: 'Down' });
+    await api('POST', `/api/sessions/${encodeURIComponent(currentSess.name)}/key`, { key: 'Enter' });
+  }
 }
 
 async function sendInput() {
   if (!currentSess) return;
   const el = document.getElementById('input-text');
-  const text = el.value;
+  const text = el.value.trim();
   if (!text) return;
   el.value = '';
+  autoResizeTextarea(el);
+  appendUserBubble(text);
   await api('POST', `/api/sessions/${encodeURIComponent(currentSess.name)}/input`, { text });
 }
 
@@ -473,11 +592,11 @@ async function captureScreen() {
   const { screen } = await res.json();
   const out = document.getElementById('output');
   if (out && screen) {
-    const d = document.createElement('div');
-    d.className = 'msg-line';
-    d.style.cssText = 'background:#1c1c1c;padding:8px;margin:4px 0;border-radius:3px;';
-    d.textContent = screen;
-    out.appendChild(d);
+    lastChatSender = null;
+    const row = document.createElement('div');
+    row.className = 'chat-row agent new-group';
+    row.innerHTML = `<div class="chat-sender">📷 화면 캡처</div><div class="bubble pre">${x(screen)}</div>`;
+    out.appendChild(row);
     out.scrollTop = out.scrollHeight;
   }
 }
@@ -487,6 +606,7 @@ async function killSession(name) {
   await api('POST', `/api/sessions/${encodeURIComponent(name)}/kill`);
   if (evtSource) evtSource.close();
   currentSess = null;
+  lastChatSender = null;
   document.getElementById('sess-main').innerHTML = '<div id="placeholder">세션을 선택하세요</div>';
   await loadSessions();
 }
@@ -784,6 +904,12 @@ async function runChain() {
 function openModal(id)  { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 document.addEventListener('click', e => { if (e.target.classList.contains('backdrop')) closeModal(e.target.id); });
+
+// ── textarea auto-resize ───────────────────────────────────────────────────
+function autoResizeTextarea(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+}
 
 // ── utils ──────────────────────────────────────────────────────────────────
 const x = s => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');

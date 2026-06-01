@@ -59,6 +59,10 @@ type MonitorConfig struct {
 	// session is considered "turn-idle". Used by the orchestrator for chain/DAG.
 	// Must be greater than typical inter-event gaps within a turn.
 	TurnIdleMS int `toml:"turn_idle_ms"`
+	// DialogGraceMS is how long the TUI monitor waits after first detecting a
+	// dialog before emitting the event. This grace period lets the JSONL watcher
+	// deliver preceding text messages before the interactive prompt arrives.
+	DialogGraceMS int `toml:"dialog_grace_ms"`
 }
 
 type AgentsConfig struct {
@@ -110,6 +114,7 @@ func defaults() *Config {
 			JSONLSettleMS:    100,
 			MessageLevel:     "interactive",
 			TurnIdleMS:       4000,
+			DialogGraceMS:    800,
 		},
 		Agents: AgentsConfig{
 			Enabled: []string{"claude_code"},

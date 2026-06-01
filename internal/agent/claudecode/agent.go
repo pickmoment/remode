@@ -22,16 +22,22 @@ var suppressedTexts = map[string]bool{
 // Agent implements core.AIAgent for Claude Code (tmux + JSONL).
 type Agent struct {
 	pollInterval time.Duration
+	dialogGrace  time.Duration
 }
 
-// New returns an Agent with a 500 ms TUI poll interval.
+// New returns an Agent with a 500 ms TUI poll interval and 800 ms dialog grace.
 func New() *Agent {
-	return &Agent{pollInterval: 500 * time.Millisecond}
+	return &Agent{pollInterval: 500 * time.Millisecond, dialogGrace: 800 * time.Millisecond}
 }
 
-// NewWithPoll returns an Agent with a custom TUI poll interval.
+// NewWithPoll returns an Agent with a custom TUI poll interval and 800 ms dialog grace.
 func NewWithPoll(poll time.Duration) *Agent {
-	return &Agent{pollInterval: poll}
+	return &Agent{pollInterval: poll, dialogGrace: 800 * time.Millisecond}
+}
+
+// NewWithPollAndGrace returns an Agent with custom TUI poll interval and dialog grace delay.
+func NewWithPollAndGrace(poll, grace time.Duration) *Agent {
+	return &Agent{pollInterval: poll, dialogGrace: grace}
 }
 
 // ── lifecycle ─────────────────────────────────────────────────────────────────
@@ -170,6 +176,21 @@ func (a *Agent) WatchEvents(
 		var lastQuestionLine string
 		var wasInWizard bool // true after a multi-step wizard dialog is detected
 
+		// graceWait pauses for dialogGrace to let the JSONL watcher deliver any
+		// preceding text messages before we emit an interactive-prompt event.
+		// Returns false if the context is cancelled (caller should return).
+		graceWait := func() bool {
+			if a.dialogGrace <= 0 {
+				return true
+			}
+			select {
+			case <-monCtx.Done():
+				return false
+			case <-time.After(a.dialogGrace):
+				return true
+			}
+		}
+
 		for {
 			select {
 			case <-monCtx.Done():
@@ -181,14 +202,28 @@ func (a *Agent) WatchEvents(
 				}
 				if IsPlanBanner(content) {
 					if prompted != "plan" {
+						if !graceWait() {
+							return
+						}
+						c2, err2 := tmuxCapture(sess)
+						if err2 != nil || !IsPlanBanner(c2) {
+							continue
+						}
 						onEvent(core.AgentEvent{Type: core.EventPlanPrompt})
 						prompted = "plan"
 					}
 				} else if IsApprovalDialog(content) {
 					question := ExtractQuestionLine(content)
 					if prompted != "approval" || question != lastQuestionLine {
-						dialogText := ExtractApprovalText(content)
-						isWizard := IsMultistepWizard(content)
+						if !graceWait() {
+							return
+						}
+						c2, err2 := tmuxCapture(sess)
+						if err2 != nil || !IsApprovalDialog(c2) {
+							continue
+						}
+						dialogText := ExtractApprovalText(c2)
+						isWizard := IsMultistepWizard(c2)
 						if isWizard {
 							wasInWizard = true
 						}
@@ -200,7 +235,7 @@ func (a *Agent) WatchEvents(
 							IsWizard:    isWizard,
 						})
 						prompted = "approval"
-						lastQuestionLine = question
+						lastQuestionLine = ExtractQuestionLine(c2)
 					}
 				} else if IsTextOptionDialog(content) {
 					question := ExtractQuestionLine(content)
@@ -208,23 +243,41 @@ func (a *Agent) WatchEvents(
 						wasInWizard = true
 					}
 					if prompted != "ask_user" || question != lastQuestionLine {
-						opts := ExtractNonNumberedOptions(content)
+						if !graceWait() {
+							return
+						}
+						c2, err2 := tmuxCapture(sess)
+						if err2 != nil || !IsTextOptionDialog(c2) {
+							continue
+						}
+						if IsMultistepWizard(c2) {
+							wasInWizard = true
+						}
+						opts := ExtractNonNumberedOptions(c2)
 						if len(opts) > 0 {
 							onEvent(core.AgentEvent{
 								Type:        core.EventAskUserQuestion,
-								AskQuestion: question,
+								AskQuestion: ExtractQuestionLine(c2),
 								AskOptions:  opts,
 							})
 						}
 						prompted = "ask_user"
-						lastQuestionLine = question
+						lastQuestionLine = ExtractQuestionLine(c2)
 					}
 				} else if wasInWizard && IsWizardFinalStep(content) {
 					// "Ready to submit your answers?" — final step of a multi-step wizard.
 					// Has numbered options but no standard navigation hints.
 					question := ExtractQuestionLine(content)
 					if prompted != "approval" || question != lastQuestionLine {
-						dialogText := ExtractApprovalText(content)
+						if !graceWait() {
+							return
+						}
+						c2, err2 := tmuxCapture(sess)
+						if err2 != nil {
+							wasInWizard = false
+							continue
+						}
+						dialogText := ExtractApprovalText(c2)
 						nOpts := countOptions(dialogText)
 						onEvent(core.AgentEvent{
 							Type:        core.EventApprovalPrompt,
@@ -233,18 +286,26 @@ func (a *Agent) WatchEvents(
 							IsWizard:    false,
 						})
 						prompted = "approval"
-						lastQuestionLine = question
+						lastQuestionLine = ExtractQuestionLine(c2)
 						wasInWizard = false
 					}
 				} else if IsInfoPanel(content) {
 					panelText := ExtractInfoPanelText(content)
 					if prompted != "info_panel" || panelText != lastInfoText {
+						if !graceWait() {
+							return
+						}
+						c2, err2 := tmuxCapture(sess)
+						if err2 != nil || !IsInfoPanel(c2) {
+							continue
+						}
+						refreshedText := ExtractInfoPanelText(c2)
 						onEvent(core.AgentEvent{
 							Type:      core.EventInfoPanel,
-							PanelText: panelText,
+							PanelText: refreshedText,
 						})
 						prompted = "info_panel"
-						lastInfoText = panelText
+						lastInfoText = refreshedText
 					}
 				} else {
 					prompted = ""

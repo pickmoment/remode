@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -312,6 +313,7 @@ func (m *Manager) ListAll() []*core.Session {
 	for _, s := range m.sessions {
 		out = append(out, s)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
@@ -522,6 +524,16 @@ func (m *Manager) sendSessionMsg(ctx context.Context, sess *core.Session, msg co
 	}
 	if err := p.Send(ctx, sess.ChatID, msg, prefix); err != nil {
 		log.Printf("platform send error (session %s): %v", sess.Name, err)
+	}
+
+	// Mirror to web platform for non-web sessions so the web UI can display output.
+	if sess.Transport != "web" {
+		m.platformsMu.RLock()
+		webP := m.platforms["web"]
+		m.platformsMu.RUnlock()
+		if webP != nil {
+			webP.Send(ctx, sess.ChatID, msg, prefix) //nolint:errcheck
+		}
 	}
 }
 
