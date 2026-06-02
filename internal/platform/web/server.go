@@ -131,6 +131,7 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/sessions/{name}/level", s.handleSetLevel)
 	// Projects
 	mux.HandleFunc("GET /api/projects", s.handleListProjects)
+	mux.HandleFunc("GET /api/projects/{sessionID}/messages", s.handleGetProjectSessionMessages)
 	// SSE output stream
 	mux.HandleFunc("GET /api/sessions/{name}/stream", s.handleStream)
 

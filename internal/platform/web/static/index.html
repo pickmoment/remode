@@ -158,6 +158,33 @@
     .dyn-item .rm { position: absolute; top: 7px; right: 8px; background: none; border: none; color: #ccc; cursor: pointer; font-size: 13px; line-height: 1; padding: 2px 4px; }
     .dyn-item .rm:hover { color: #a03030; }
 
+    /* ── projects tab ── */
+    #tab-projects { flex-direction: row; }
+    #proj-sidebar { width: 260px; min-width: 180px; background: #fff; border-right: 1px solid #ddd; display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; }
+    #proj-sidebar-hdr { padding: 12px 16px; font-size: 13px; color: #666; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 6px; }
+    #proj-sidebar-hdr span { flex: 1; }
+    #proj-list { flex: 1; overflow-y: auto; }
+    .proj-group { border-bottom: 1px solid #f0f0f0; }
+    .proj-header { padding: 9px 14px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; user-select: none; }
+    .proj-header:hover { background: #f8f9fa; }
+    .proj-arrow { font-size: 10px; color: #bbb; transition: transform .15s; flex-shrink: 0; }
+    .proj-header.open .proj-arrow { transform: rotate(90deg); }
+    .proj-name { font-weight: 600; color: #1a6fa8; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+    .proj-count { font-size: 11px; color: #bbb; flex-shrink: 0; }
+    .proj-sessions { display: none; background: #fafafa; }
+    .proj-sessions.open { display: block; }
+    .proj-sess-item { padding: 7px 14px 7px 28px; cursor: pointer; font-size: 12px; border-bottom: 1px solid #f0f0f0; }
+    .proj-sess-item:hover { background: #f0f4f8; }
+    .proj-sess-item.active { background: #e8f2fa; }
+    .proj-sess-title { color: #1a1a1a; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .proj-sess-meta { font-size: 11px; color: #999; margin-top: 2px; }
+    #proj-main { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+    #proj-conv-hdr { background: #fff; border-bottom: 1px solid #ddd; padding: 10px 16px; flex-shrink: 0; }
+    .proj-conv-title { font-size: 13px; font-weight: bold; color: #1a6fa8; }
+    .proj-conv-cwd { font-size: 11px; color: #999; margin-top: 2px; }
+    #proj-output { flex: 1; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 2px; background: #eef2f7; }
+    #proj-placeholder { flex: 1; display: flex; align-items: center; justify-content: center; color: #ccc; font-size: 14px; }
+
     /* ── auth overlay ── */
     #auth { position: fixed; inset: 0; background: #f0f4f8; display: flex; align-items: center; justify-content: center; z-index: 100; }
     #auth-box { background: #fff; border: 1px solid #ddd; padding: 28px 32px; border-radius: 8px; min-width: 300px; box-shadow: 0 4px 16px rgba(0,0,0,.1); }
@@ -182,6 +209,7 @@
   <button class="tab-btn"         data-tab="schedules"    onclick="switchTab(this)">스케줄</button>
   <button class="tab-btn"         data-tab="workflows"    onclick="switchTab(this)">워크플로우</button>
   <button class="tab-btn"         data-tab="orchestrate"  onclick="switchTab(this)">오케스트레이션</button>
+  <button class="tab-btn"         data-tab="projects"     onclick="switchTab(this)">프로젝트</button>
 </nav>
 
 <div id="content">
@@ -273,6 +301,20 @@
         <button class="btn primary" onclick="runChain()">실행</button>
         <div class="orc-result" id="chain-result">—</div>
       </div>
+    </div>
+  </div>
+
+  <!-- ── Projects ── -->
+  <div id="tab-projects" class="tab-panel">
+    <div id="proj-sidebar">
+      <div id="proj-sidebar-hdr">
+        <span>클로드 코드 프로젝트</span>
+        <button class="btn" style="padding:3px 8px;font-size:11px" onclick="loadProjects()">↺</button>
+      </div>
+      <div id="proj-list"><div style="padding:16px;color:#bbb;font-size:12px">불러오는 중…</div></div>
+    </div>
+    <div id="proj-main">
+      <div id="proj-placeholder">프로젝트 → 세션을 선택하세요</div>
     </div>
   </div>
 
@@ -431,6 +473,7 @@ function switchTab(btn) {
   if (tab === 'schedules')   loadSchedules();
   if (tab === 'workflows')   loadWorkflows();
   if (tab === 'orchestrate') renderOrcSelects();
+  if (tab === 'projects')    loadProjects();
 }
 
 // ── sessions ───────────────────────────────────────────────────────────────
@@ -909,6 +952,110 @@ document.addEventListener('click', e => { if (e.target.classList.contains('backd
 function autoResizeTextarea(el) {
   el.style.height = 'auto';
   el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+}
+
+// ── projects ───────────────────────────────────────────────────────────────
+let projects = [];
+
+async function loadProjects() {
+  const res = await api('GET', '/api/projects');
+  if (!res.ok) return;
+  projects = await res.json() || [];
+  renderProjectList();
+}
+
+function renderProjectList() {
+  const el = document.getElementById('proj-list');
+  if (!el) return;
+  if (!projects.length) {
+    el.innerHTML = '<div style="padding:16px;color:#bbb;font-size:12px">프로젝트 없음</div>';
+    return;
+  }
+  el.innerHTML = '';
+  for (const p of projects) {
+    const group = document.createElement('div');
+    group.className = 'proj-group';
+
+    const hdr = document.createElement('div');
+    hdr.className = 'proj-header';
+    hdr.title = p.CWD || '';
+    hdr.innerHTML = `<span class="proj-arrow">▶</span><span class="proj-name">${x(p.DisplayPath || p.CWD)}</span><span class="proj-count">${(p.Sessions||[]).length}</span>`;
+
+    const sessDiv = document.createElement('div');
+    sessDiv.className = 'proj-sessions';
+    for (const s of (p.Sessions || [])) {
+      const item = document.createElement('div');
+      item.className = 'proj-sess-item';
+      const title = s.Title || s.SessionID.slice(0, 8) + '…';
+      item.innerHTML = `<div class="proj-sess-title">${x(title)}</div><div class="proj-sess-meta">${ft(s.LastModified)}</div>`;
+      item.onclick = () => openProjectSession(p, s, item);
+      sessDiv.appendChild(item);
+    }
+
+    hdr.onclick = () => {
+      const isOpen = hdr.classList.toggle('open');
+      sessDiv.classList.toggle('open', isOpen);
+    };
+
+    group.appendChild(hdr);
+    group.appendChild(sessDiv);
+    el.appendChild(group);
+  }
+}
+
+async function openProjectSession(project, sess, itemEl) {
+  document.querySelectorAll('.proj-sess-item').forEach(el => el.classList.remove('active'));
+  itemEl.classList.add('active');
+
+  const main = document.getElementById('proj-main');
+  const title = sess.Title || sess.SessionID;
+  main.innerHTML = `
+    <div id="proj-conv-hdr">
+      <div class="proj-conv-title">${x(title)}</div>
+      <div class="proj-conv-cwd">${x(project.CWD || project.DisplayPath)}</div>
+    </div>
+    <div id="proj-output"><div style="color:#bbb;padding:24px;text-align:center;align-self:center">불러오는 중…</div></div>`;
+
+  const res = await api('GET', `/api/projects/${encodeURIComponent(sess.SessionID)}/messages`);
+  const output = document.getElementById('proj-output');
+  if (!output) return;
+
+  if (!res.ok) {
+    output.innerHTML = `<div style="color:#c00;padding:12px;font-size:12px">오류: ${x(await res.text())}</div>`;
+    return;
+  }
+
+  const msgs = await res.json() || [];
+  output.innerHTML = '';
+  if (!msgs.length) {
+    output.innerHTML = '<div style="color:#bbb;padding:24px;text-align:center;align-self:center">대화 내용 없음</div>';
+    return;
+  }
+
+  let lastRole = null;
+  for (const msg of msgs) {
+    const isNewGroup = msg.role !== lastRole;
+    lastRole = msg.role;
+
+    const row = document.createElement('div');
+    row.className = `chat-row ${msg.role}${isNewGroup ? ' new-group' : ''}`;
+
+    let inner = '';
+    if (isNewGroup && msg.role !== 'tool') {
+      const label = msg.role === 'user' ? '나' : '에이전트';
+      inner += `<div class="chat-sender">${label}</div>`;
+    }
+
+    if (msg.role === 'tool') {
+      inner += `<div class="bubble">${x(msg.text)}</div>`;
+    } else {
+      inner += `<div class="bubble">${renderMd(msg.text)}</div>`;
+    }
+
+    row.innerHTML = inner;
+    output.appendChild(row);
+  }
+  output.scrollTop = output.scrollHeight;
 }
 
 // ── utils ──────────────────────────────────────────────────────────────────

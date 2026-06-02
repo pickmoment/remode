@@ -382,6 +382,17 @@ func (m *Manager) ProjectDirFor(cwd, agentType string) string {
 	return m.agents[m.resolveAgentType(agentType)].ProjectDirFor(cwd, m.cfg.ClaudeProjectsDir)
 }
 
+// FindSessionJSONL locates the JSONL output file for the given Claude session UUID
+// by globbing across all project directories under ClaudeProjectsDir.
+func (m *Manager) FindSessionJSONL(sessionID string) string {
+	pattern := filepath.Join(m.cfg.ClaudeProjectsDir, "*", sessionID+".jsonl")
+	matches, err := filepath.Glob(pattern)
+	if err != nil || len(matches) == 0 {
+		return ""
+	}
+	return matches[0]
+}
+
 func (m *Manager) SetMessageLevel(ctx context.Context, sess *core.Session, level string) error {
 	sess.Level = core.MessageLevel(level)
 	return m.store.UpdateMessageLevel(sess.Name, level)
