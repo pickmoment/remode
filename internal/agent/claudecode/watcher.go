@@ -87,11 +87,11 @@ func Watch(
 				}
 				sess.SessionID = strings.TrimSuffix(filepath.Base(path), ".jsonl")
 				sess.JSONLPath = path
-				sess.JSONLOffset = 0
+				sess.JSONLOffset = info.Size() // start after existing content; only forward new writes
 				if err := updater.Save(sess); err != nil {
 					log.Printf("watcher: save after JSONL switch: %v", err)
 				}
-				log.Printf("watcher: switched to new JSONL %s", sess.SessionID)
+				log.Printf("watcher: switched to new JSONL %s (offset=%d)", sess.SessionID, sess.JSONLOffset)
 				// Watch new directory if it changed
 				w.Add(filepath.Dir(path)) //nolint:errcheck
 			} else {
@@ -134,7 +134,13 @@ func flushNewLines(sess *core.Session, onEntry func(map[string]any), updater cor
 	size := info.Size()
 	offset := sess.JSONLOffset
 	if offset > size {
-		offset = 0
+		// File shrank (truncated or replaced). Advance stored offset to avoid
+		// replaying from 0 on the next call.
+		sess.JSONLOffset = size
+		if err := updater.UpdateOffset(sess.Name, size); err != nil {
+			log.Printf("watcher: update offset after shrink: %v", err)
+		}
+		return
 	}
 	if _, err := f.Seek(offset, io.SeekStart); err != nil {
 		return
