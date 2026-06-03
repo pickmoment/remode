@@ -92,7 +92,7 @@ func parseUserBlocks(entry map[string]any, ts string) []projectMessage {
 	switch v := msg["content"].(type) {
 	case string:
 		t := strings.TrimSpace(v)
-		if t == "" {
+		if t == "" || len(t) > 2000 {
 			return nil
 		}
 		return []projectMessage{{Role: "user", Text: t, Timestamp: ts}}
@@ -105,7 +105,9 @@ func parseUserBlocks(entry map[string]any, ts string) []projectMessage {
 			}
 			if m["type"] == "text" {
 				if t, ok := m["text"].(string); ok {
-					if t = strings.TrimSpace(t); t != "" {
+					t = strings.TrimSpace(t)
+					// Skip large injected context (skill files, system prompts, etc.)
+					if t != "" && len(t) <= 2000 {
 						parts = append(parts, t)
 					}
 				}
